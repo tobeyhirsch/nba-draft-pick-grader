@@ -51,7 +51,6 @@ CONTENDER_ROSTER = [
     PlayerProjection("Depth Guard", darko=-2.0, projected_mpg=26),
 ]
 
-
 def build_demo_league():
     rosters = {"Tanking Team": TANKING_TEAM_ROSTER, "Contender": CONTENDER_ROSTER}
     conferences = {"Tanking Team": "East", "Contender": "West"}
