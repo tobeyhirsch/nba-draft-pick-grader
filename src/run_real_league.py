@@ -16,13 +16,22 @@ PERFORMANCE NOTE: pick_resolver.build_pick_assets() runs its own dedicated
 Monte Carlo batch (TRIALS_PER_TEAM trials) for each team's specific pick
 portfolio, and each trial simulates a full 30-team season + lottery draw
 from scratch. Total cost scales with (teams requested) x (trials per
-team) -- there's no caching/sharing of simulated seasons ACROSS different
-teams' calls in the current pick_resolver design (each team's swaps
-reference a different subset of the other 29 teams, so the trial batches
-aren't directly reusable as-is without a bigger refactor). Grading all 30
-teams at TRIALS_PER_TEAM=2000 takes roughly a minute and a half on this
-project's reference hardware; raise TRIALS_PER_TEAM for tighter precision
-on a small number of teams, lower it for a fast full-league smoke test.
+team) x (distinct draft years that team's portfolio touches) -- there's no
+caching/sharing of simulated seasons ACROSS different teams' calls in the
+current pick_resolver design (each team's swaps reference a different
+subset of the other 29 teams, so the trial batches aren't directly
+reusable as-is without a bigger refactor), and since darko_ratings.py's
+evolved ratings were wired in (see build_future_year_teams), a team whose
+picks span multiple of the 2028-2032 draft years now runs one batch PER
+distinct year in that span rather than one shared batch for its whole
+portfolio -- years that share the same league (2027, and 2033+, which both
+still fall back to the flat 2026-27 market ratings) still dedupe to a
+single batch, so this mostly costs extra for teams with picks spread
+across several of the 2028-2032 years. Grading all 30 teams at
+TRIALS_PER_TEAM=2000 previously took roughly a minute and a half; expect
+noticeably longer now given the extra per-year batches -- raise
+TRIALS_PER_TEAM for tighter precision on a small number of teams, lower it
+for a fast full-league smoke test.
 """
 
 import os
@@ -38,6 +47,10 @@ from pick_grading import grade_pick_portfolio
 from pick_restrictions_321 import DEFAULT_2027_HISTORY
 from standings_sim import Team
 from data_paths import find_data_file
+from darko_ratings import (
+    load_darko_players, all_teams_net_ratings, fit_darko_to_elo,
+    future_year_teams, MAX_OFFSET, FIRST_DRAFT_YEAR_COVERED,
+)
 
 # Checks several common data/ locations relative to THIS file (see
 # data_paths.py) rather than assuming one fixed layout -- works whether
@@ -55,7 +68,34 @@ def build_real_league() -> List[Team]:
                                    trials_per_iteration=400, iterations=30)
 
 
-def grade_team(team_name: str, teams: Sequence[Team],
+def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]:
+    """
+    {draft_year: teams} for the 2028-2032 drafts, built from real DARKO DPM
+    + longevity data (darko_ratings.py) instead of reusing base_teams'
+    2026-27 market ratings unchanged for every future year. The 2027 draft
+    deliberately isn't in this dict -- it already uses base_teams directly
+    (the real, unmodified 2026-27 market ratings are the best available
+    signal for the season that's actually about to happen; darko_ratings.py
+    is calibrated AGAINST those same ratings, so re-deriving 2027 from it
+    would only add noise). See darko_ratings.py's module docstring for the
+    method and its caveats (this model can only ever go flat-or-down per
+    team, never up, which is why the window stops at 2032).
+    """
+    players = load_darko_players()
+    darko_now = all_teams_net_ratings(players, offset=0)
+    market_elo = {t.name: t.rating for t in base_teams}
+    slope, intercept, r2 = fit_darko_to_elo(darko_now, market_elo)
+    print(f"  DARKO-to-Elo fit vs. current market ratings: r^2={r2:.3f} "
+          f"(slope={slope:.2f}, intercept={intercept:.1f}) -- see darko_ratings.py to inspect further")
+
+    conferences = {t.name: t.conference for t in base_teams}
+    return {
+        FIRST_DRAFT_YEAR_COVERED + offset - 1: future_year_teams(players, offset, slope, intercept, conferences)
+        for offset in range(1, MAX_OFFSET + 1)
+    }
+
+
+def grade_team(team_name: str, teams: Sequence[Team], teams_by_year: Dict[int, List[Team]] = None,
                trials: int = TRIALS_PER_TEAM) -> Tuple[List[dict], List[tuple]]:
     # The market win totals this league is calibrated from are the 2026-27
     # season's O/U lines, so the resulting lottery this pipeline simulates
@@ -63,18 +103,28 @@ def grade_team(team_name: str, teams: Sequence[Team],
     # Seed real 2025+2026 history (pick_restrictions_321.py) so simulated
     # 2027 lottery draws correctly enforce "no repeat #1" (blocks
     # Washington) and "no 3-straight top-5" (blocks Utah).
+    #
+    # teams_by_year (darko_ratings.py-derived, see build_future_year_teams)
+    # overrides the 2028-2032 drafts with DARKO+longevity-evolved ratings;
+    # 2027 and 2033 fall back to `teams` (the flat 2026-27 market ratings),
+    # same as before this parameter existed.
     assets, unresolved = build_pick_assets(team_name, teams_for_simulation=teams,
                                             trials=trials, seed=GRADING_SEED,
-                                            history=DEFAULT_2027_HISTORY)
+                                            history=DEFAULT_2027_HISTORY,
+                                            teams_by_year=teams_by_year)
     graded = grade_pick_portfolio(assets)
     return graded, unresolved
 
 
 def write_report(all_results: Dict[str, Tuple[List[dict], List[tuple]]], path: str) -> None:
     lines = ["# NBA Draft Pick Grades -- Full League Run", ""]
-    lines.append(f"Ratings calibrated from consensus market win totals (DraftKings/FanDuel/"
-                 f"Hard Rock/Caesars 2026-27 O/U lines); picks graded 1-10 via the swap-resolved "
-                 f"pipeline. {TRIALS_PER_TEAM} simulation trials per team.")
+    lines.append(f"2027-draft ratings calibrated from consensus market win totals (DraftKings/"
+                 f"FanDuel/Hard Rock/Caesars 2026-27 O/U lines); the {FIRST_DRAFT_YEAR_COVERED}-"
+                 f"{FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET - 1} drafts use DARKO DPM + career "
+                 f"longevity data instead, calibrated against those same market ratings "
+                 f"(darko_ratings.py); 2033 falls back to the flat 2026-27 market ratings. "
+                 f"Picks graded 1-10 via the swap-resolved pipeline. {TRIALS_PER_TEAM} simulation "
+                 f"trials per team per draft year.")
     lines.append("")
 
     lines.append("## League summary: average pick grade by team")
@@ -116,11 +166,17 @@ def main():
     teams = build_real_league()
     print(f"  done in {time.time() - t0:.1f}s")
 
+    print(f"\nBuilding DARKO+longevity-evolved ratings for the "
+          f"{FIRST_DRAFT_YEAR_COVERED}-{FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET - 1} drafts...")
+    t0 = time.time()
+    teams_by_year = build_future_year_teams(teams)
+    print(f"  done in {time.time() - t0:.1f}s")
+
     print(f"\nGrading {len(requested)} team(s), {TRIALS_PER_TEAM} trials each...")
     t0 = time.time()
     all_results: Dict[str, Tuple[List[dict], List[tuple]]] = {}
     for i, name in enumerate(requested, 1):
-        graded, unresolved = grade_team(name, teams)
+        graded, unresolved = grade_team(name, teams, teams_by_year=teams_by_year)
         all_results[name] = (graded, unresolved)
         print(f"  [{i}/{len(requested)}] {name}: {len(graded)} picks graded, "
               f"{len(unresolved)} unresolved  ({time.time() - t0:.1f}s elapsed)")

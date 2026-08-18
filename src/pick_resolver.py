@@ -141,19 +141,32 @@ def build_pick_assets(team_name: str,
                        seed: int = None,
                        current_year: int = 2026,
                        fallback_value: float = 0.0,
-                       history: Optional[Dict[str, List[int]]] = None
+                       history: Optional[Dict[str, List[int]]] = None,
+                       teams_by_year: Optional[Dict[int, Sequence]] = None
                        ) -> Tuple[List[PickAsset], List[UnresolvedEntry]]:
     """
     teams_for_simulation: the real 30-team league (standings_sim.Team
         objects, keyed by full name -- e.g. from team_wins.build_teams() or
-        a market-win-total calibration). When given, this function runs ONE
-        shared batch of correlated joint trials
-        (draft_pipeline_321.joint_pick_number_trials) covering every team
-        code this portfolio actually needs -- both this team's own future
-        picks AND every team referenced in any of its swaps -- so swap
-        comparisons use real correlated outcomes rather than independent
-        marginals, and simple future picks get a real simulated
-        distribution "for free" from the same run.
+        a market-win-total calibration). When given, this function runs
+        correlated joint trials (draft_pipeline_321.joint_pick_number_trials)
+        covering every team code this portfolio actually needs -- both this
+        team's own future picks AND every team referenced in any of its
+        swaps -- so swap comparisons use real correlated outcomes rather
+        than independent marginals, and simple future picks get a real
+        simulated distribution "for free" from the same run. Used as the
+        league for every year NOT covered by `teams_by_year` (see below).
+
+    teams_by_year: optional {draft_year: teams_for_simulation-shaped league}
+        override for specific years -- e.g. darko_ratings.py's DARKO+
+        longevity-evolved ratings for the 2028-2032 drafts. A fragment
+        dated year Y uses teams_by_year[Y] if present, otherwise falls back
+        to `teams_for_simulation` (so 2027 and any year beyond the
+        override's window keep using the single base league, same as
+        before this parameter existed). Each distinct (league, history)
+        combination actually needed only runs ONE joint_pick_number_trials
+        batch, no matter how many years resolve to it -- e.g. every year
+        NOT in teams_by_year still shares a single batch against the base
+        league, exactly like the old behavior.
 
     team_distributions: optional {team_code: {pick_number: probability}}
         override/fallback for simple (non-swap) future picks, e.g. if you
@@ -165,18 +178,17 @@ def build_pick_assets(team_name: str,
         e.g. pick_restrictions_321.DEFAULT_2027_HISTORY to enforce the real
         "no repeat #1 / no 3-straight top-5" restrictions -- seeded from
         actual 2025-2026 results. Has no effect if teams_for_simulation
-        isn't given. IMPORTANT SCOPING: this pipeline doesn't model
-        multi-year evolving team strength -- every future year's pick
-        distribution for a team is drawn from the same one-season
-        simulation (current ratings), only time-discounted via years_away.
-        `history` is only factually grounded for the 2027 draft specifically
+        isn't given. Only factually grounded for the 2027 draft specifically
         (that's the only year with a real, known restriction carry-in), so
         it's applied ONLY to fragments whose year == 2027; every other
         year's fragments always use the unrestricted distribution, even if
         they share a team code with a 2027 fragment in the same portfolio.
-        This costs a second joint_pick_number_trials batch (same seed, so
-        it only actually diverges from the unrestricted batch on the trials
-        where a restriction bites -- see pick_restrictions_321.py).
+        SCOPING: without `teams_by_year`, this pipeline still doesn't model
+        multi-year evolving team strength -- every future year's pick
+        distribution for a team is drawn from the same one-season
+        simulation (current ratings), only time-discounted via years_away.
+        Pass `teams_by_year` to override specific years with their own
+        evolved ratings instead.
 
     Returns (assets, unresolved) -- assets are ready to grade via
     pick_grading.grade_pick_portfolio(); unresolved lists everything that
@@ -191,30 +203,40 @@ def build_pick_assets(team_name: str,
     for swap in swap_picks:
         needed_codes.update(swap.teams)
 
-    # {code: {"1st": [...], "2nd": [...]}} -- round-aware, see
-    # draft_pipeline_321.joint_pick_number_trials's docstring for why this
-    # can't be flattened to one list per team (a team's 1st- and 2nd-round
-    # pick numbers are different values every trial, not interchangeable).
-    joint_by_code: Dict[str, Dict[str, List[int]]] = {}
-    # Second, history-restricted batch -- ONLY used for year-2027 fragments.
-    # See build_pick_assets' `history` docstring for why 2027 is special-cased
-    # rather than applying restrictions to every year.
-    joint_by_code_2027: Dict[str, Dict[str, List[int]]] = {}
+    # {year: {code: {"1st": [...], "2nd": [...]}}} -- round-aware (see
+    # draft_pipeline_321.joint_pick_number_trials's docstring for why a
+    # team's 1st- and 2nd-round pick numbers can't be flattened into one
+    # list per team), and now year-aware too: a fragment dated year Y reads
+    # from joint_tables[Y], which points at whichever league (base, or a
+    # teams_by_year override) and history-restriction combo applies to Y.
+    joint_tables: Dict[int, Dict[str, Dict[str, List[int]]]] = {}
     if teams_for_simulation and needed_codes:
         bad_codes = [c for c in needed_codes if c not in TEAM_ABBREV_TO_NAME]
         if bad_codes:
             raise KeyError(f"Unknown team code(s), no full-name mapping in team_codes.py: {bad_codes}")
         needed_names = [TEAM_ABBREV_TO_NAME[c] for c in sorted(needed_codes)]
         from draft_pipeline_321 import joint_pick_number_trials  # local import avoids a hard dependency for callers who only need marginals
-        joint = joint_pick_number_trials(teams_for_simulation, needed_names, trials=trials, seed=seed)
-        joint_by_code = {c: joint[TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
-        if history is not None:
-            joint_2027 = joint_pick_number_trials(teams_for_simulation, needed_names, trials=trials,
-                                                    seed=seed, history=history)
-            joint_by_code_2027 = {c: joint_2027[TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
+
+        years_needing_sim = {year for year, _, _, pick_num, _ in simple_picks if pick_num is None}
+        years_needing_sim.update(swap.year for swap in swap_picks)
+
+        # Dedupe by (league identity, history-applies): many years can
+        # resolve to the exact same league (e.g. every year teams_by_year
+        # doesn't cover falls back to teams_for_simulation) -- run one
+        # simulation batch per distinct combo, not one per year.
+        batch_cache: Dict[Tuple[int, bool], Dict[str, Dict[str, List[int]]]] = {}
+        for year in years_needing_sim:
+            league = (teams_by_year or {}).get(year, teams_for_simulation)
+            use_history = history is not None and year == 2027
+            cache_key = (id(league), use_history)
+            if cache_key not in batch_cache:
+                joint = joint_pick_number_trials(league, needed_names, trials=trials, seed=seed,
+                                                  history=history if use_history else None)
+                batch_cache[cache_key] = {c: joint[TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
+            joint_tables[year] = batch_cache[cache_key]
 
     def marginal_distribution_for(code: str, round_str: str, year: int) -> Optional[Dict[int, float]]:
-        table = joint_by_code_2027 if (year == 2027 and code in joint_by_code_2027) else joint_by_code
+        table = joint_tables.get(year, {})
         if code in table:
             picks = table[code][round_str]
             n = len(picks)
@@ -253,7 +275,8 @@ def build_pick_assets(team_name: str,
 
     # --- Tier 2: swaps (need the joint/correlated distributions above) ---
     for swap in swap_picks:
-        if not all(t in joint_by_code for t in swap.teams):
+        table = joint_tables.get(swap.year, {})
+        if not all(t in table for t in swap.teams):
             unresolved.append((swap.year, swap.raw_text,
                                 "swap parsed but no simulation league was provided "
                                 "(pass teams_for_simulation to resolve it)"))
@@ -261,11 +284,8 @@ def build_pick_assets(team_name: str,
         # Slice each team's joint trials down to the ROUND this swap actually
         # concerns (swap.round_str) -- swap.teams' picks in the OTHER round
         # are a different, uncorrelated-for-this-purpose number and must not
-        # be mixed in. Use the history-restricted batch only for year-2027
-        # swaps (see build_pick_assets' `history` docstring).
-        use_2027 = swap.year == 2027 and all(t in joint_by_code_2027 for t in swap.teams)
-        source = joint_by_code_2027 if use_2027 else joint_by_code
-        round_trials = {t: source[t][swap.round_str] for t in swap.teams}
+        # be mixed in.
+        round_trials = {t: table[t][swap.round_str] for t in swap.teams}
         assets.append(swap_to_pick_asset(swap, round_trials, current_year=current_year,
                                           fallback_value=fallback_value))
 

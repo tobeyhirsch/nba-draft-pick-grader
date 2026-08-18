@@ -8,8 +8,11 @@ distribution over draft slots, and grades each one 1-10.
 
 **Entry point:** `python run_real_league.py` (optionally followed by one or
 more team names to grade just those teams; with no arguments it grades all
-30). Takes about 2 minutes for the full league at the default trial count.
-Writes `league_pick_grades.md`.
+30). Takes roughly 10 minutes for the full league at the default trial
+count -- up from ~2 minutes before `darko_ratings.py` was wired in, since a
+team's picks now run a separate simulation batch per distinct draft year
+they span rather than one shared batch (see `run_real_league.py`'s
+PERFORMANCE NOTE). Writes `league_pick_grades.md`.
 
 ## Pipeline, in order
 
@@ -18,25 +21,34 @@ market_win_totals.xlsx                    PlayerSalariesCSV.csv
         |                                          |
         v                                          v
 market_ratings.py                          cap_sheet_data.py
-(sportsbook lines -> Elo ratings)          (5-year contracts, all 30 teams)
+(sportsbook lines -> Elo ratings,          (5-year contracts, all 30 teams)
+ 2027 draft only)
         |
-        v
+        +-------------------+
+        |                   v
+        |         darkodpmleaderboard.csv + darkolongevityprojections.csv
+        |                   |
+        |                   v
+        |         darko_ratings.py  (DPM+longevity, calibrated
+        |         against market_ratings.py's Elo -> evolved
+        |         ratings for the 2028-2032 drafts)
+        |                   |
+        v                   v
 conferences.py  ---->  standings_sim.py  <----  draft_picks_data.py
 (East/West)            (season simulator)       (raw pick-ownership text,
-        |                     |                   all 30 teams, 2026-2033)
+        |                     |                   all 30 teams, 2027-2033)
         v                     v                          |
 draft_pipeline_321.py  <-----+                            v
 (play-in + 3-2-1 lottery,                         pick_resolver.py
  both rounds, per season)                         (classifies each
         |                                          fragment: simple /
-        v                                          swap / unresolved)
-pick_restrictions_321.py                                  |
-(real 2025-26 history ->                                  v
- "no repeat #1 / no                                swap_resolver.py
- 3-straight top-5" for 2027)                       (resolves swaps via
-        |                                           joint Monte Carlo
-        +------------------------------------------>trials from
-                                                     draft_pipeline_321.py)
+        v                                          swap / unresolved;
+pick_restrictions_321.py                           runs a separate joint
+(real 2025-26 history ->                           trial batch per draft
+ "no repeat #1 / no                                year, using market_
+ 3-straight top-5" for 2027)                       ratings.py's or darko_
+        |                                          ratings.py's teams as
+        +------------------------------------------>appropriate)
                                                             |
                                                             v
                                                     pick_valuation.py
@@ -68,12 +80,21 @@ they aren't wired into the automatic league-wide run.
   lines (DraftKings/FanDuel/Hard Rock/Caesars). Input to `market_ratings.py`.
 - **`PlayerSalariesCSV.csv`** -- 5-year (2026-27 through 2030-31) salary and
   option data for all 30 teams, 435 contracts. Input to `cap_sheet_data.py`.
+- **`darkodpmleaderboard.csv`** -- 530 active players' DARKO DPM (a
+  per-100-possession plus-minus skill rating, split into ODPM/DDPM) and
+  projected MPG. Input to `darko_ratings.py`.
+- **`darkolongevityprojections.csv`** -- the SAME 530 players (verified
+  identical `(Player, Team)` keys against the DPM file), each with a 0-100
+  "still an NBA player" probability at +1 through +15 years out. Input to
+  `darko_ratings.py`.
 - **`conferences.py`** -- static East/West assignment for all 30 teams.
-- **`draft_picks_data.py`** -- every team's pick ownership, 2026-2033, as
+- **`draft_picks_data.py`** -- every team's pick ownership, 2027-2033, as
   raw text transcribed from LD Sport (credited to ESPN) -- e.g. `"MIL/NO
   (Less Favorable) 1st (If #5-30)"`. Deliberately kept as text rather than
   pre-resolved, since resolving conditional language requires simulation
-  (see `pick_resolver.py` below).
+  (see `pick_resolver.py` below). The 2026 draft has concluded, so each
+  team's already-resolved 2026 selection(s) were removed -- this table now
+  starts at 2027, the next draft the pipeline actually projects.
 - **`cap_sheet_data.py`** -- parses `PlayerSalariesCSV.csv` into
   `roster_cap.Contract`/`CapSheet` objects for all 30 teams at import time.
   Its docstring has the full history of why this superseded four earlier
@@ -115,7 +136,21 @@ they aren't wired into the automatic league-wide run.
   aren't independent -- same conference, overlapping schedules).
 - **`market_ratings.py`** -- converts the sportsbook win-total spreadsheet
   into calibrated Elo ratings via iterative fixed-point fitting (there's no
-  closed-form solution since all 30 ratings are jointly determined).
+  closed-form solution since all 30 ratings are jointly determined). This is
+  the ground truth for the 2027 draft specifically (the season the market
+  lines actually cover); see `market_ratings.py`'s docstring for why market
+  data, not a DARKO sum, is used as-is for that one season.
+- **`darko_ratings.py`** -- projects team strength for the 2028-2032 drafts,
+  which the market hasn't priced. Builds each team's MPG-weighted DARKO net
+  rating, fits a linear regression against `market_ratings.py`'s Elo (r^2
+  reported by its `__main__` -- check it before trusting anything
+  downstream), then re-derives that net rating per future year by
+  multiplying each player's contribution by their career-longevity
+  probability at that year (a retiring player's minutes are treated as
+  replacement-level, not redistributed to teammates). Capped at 5 years out
+  because the model can only ever go flat-or-down, never up (no incoming
+  rookies/trades/free agents are modeled) -- see its docstring for the full
+  reasoning.
 
 ### Ownership resolution layer
 
@@ -126,10 +161,12 @@ they aren't wired into the automatic league-wide run.
   nested/elliptical language and cross-year conditionals unresolved with an
   explicit reason rather than guessing.
 - **`pick_resolver.py`** -- the orchestrator for one team's whole pick
-  portfolio. Classifies every fragment (simple / swap / unresolved), runs
-  ONE shared batch of joint trials covering everything that portfolio needs,
-  and returns ready-to-grade `PickAsset` objects plus a list of what's still
-  unresolved and why.
+  portfolio. Classifies every fragment (simple / swap / unresolved), and
+  runs a joint trial batch per distinct draft year that portfolio needs
+  (via `teams_by_year`, e.g. `darko_ratings.py`'s evolved 2028-2032 teams --
+  years not covered fall back to a single shared batch against the base
+  league, same as before `teams_by_year` existed), returning ready-to-grade
+  `PickAsset` objects plus a list of what's still unresolved and why.
 
 ### Valuation and grading layer
 
@@ -172,19 +209,41 @@ they aren't wired into the automatic league-wide run.
 
 ## Known gaps (honest status, not hidden)
 
-- **58 of 511 pick fragments across the league don't auto-resolve** (last
+- **58 of 393 pick fragments across the league don't auto-resolve** (last
   checked): 28 have nested/elliptical swap language the parser doesn't
   attempt, 23 are cross-pick conditionals that depend on a *different*
-  pick's outcome (would need multi-year team-strength modeling, which this
-  pipeline doesn't do), 5 don't match any known pattern, 2 are ambiguous
+  pick's outcome, 5 don't match any known pattern, 2 are ambiguous
   parenthetical ranges. `pick_resolver.py`'s output always lists these with
   a specific reason rather than silently guessing.
-- **No multi-year team-strength evolution.** Every future year's pick
-  distribution for a team comes from the SAME one-season simulation
-  (current market-calibrated ratings), only time-discounted via
-  `years_away`. A 2033 pick is graded as if today's team strength holds
-  for seven more years, which it won't -- there's no mechanism here for
-  aging curves, expected roster turnover, or CBA changes.
+- **Multi-year team-strength evolution is now partial, not absent.** The
+  2028-2032 drafts use `darko_ratings.py`'s DARKO+longevity-evolved ratings
+  instead of a frozen snapshot -- but it's a bounded, honestly-caveated
+  model, not a real forecast:
+  - It can only ever move a team's rating flat or DOWN over time. Retiring
+    players' minutes are modeled as going to a replacement-level (0 DPM)
+    stand-in, never a rookie who develops, a trade addition, or a free
+    agent -- there's no "new talent enters the league" term. This is why
+    the window stops at 5 years out (2032) rather than the full 15 years
+    the longevity data covers.
+  - The DARKO-to-market fit is real but moderate (r^2 ~ 0.66 at last check,
+    reported by `darko_ratings.py`'s `__main__` -- always re-check it if the
+    input CSVs change). The single biggest miss is deep, balanced rosters
+    like Oklahoma City's: MPG-weighting a full 18-man roster dilutes a
+    stacked rotation with garbage-time bench minutes, so a team that's
+    genuinely elite by market consensus can come out looking merely
+    "above average" in DARKO-implied terms -- which shows up as a
+    conspicuous jump between that team's 2027 pick grade (real market data)
+    and its 2028+ grades (the lower DARKO-implied number). Worth a manual
+    sanity check for any team whose grades jump sharply at that boundary.
+  - Players who stay on the roster are scored at their CURRENT DPM for
+    every future year -- no aging curve on skill itself, only on presence
+    (the longevity data is a "still playing" probability, not a future
+    skill projection).
+  - 2027 and 2033 aren't touched by this model: 2027 uses
+    `market_ratings.py`'s real 2026-27 market ratings directly (the best
+    signal available for the season that's actually about to happen), and
+    2033 falls back to that same flat baseline since it's outside the
+    5-year window.
 - **The 3-2-1 lottery is applied uniformly to every future year (2027 and
   beyond)**, even though the league has only confirmed the format through
   the 2029 draft; 2030+ rules are pending a future Board of Governors vote.
