@@ -6,10 +6,10 @@ to produce a distribution over final standings -- and, chained with
 lottery_sim, a distribution over where each team's draft pick actually lands.
 
 Deliberately simplified for a first pass:
-  - Ratings are Elo-style point-differential proxies, not yet wired to
-    DARKO/EPM roster sums. That wiring happens in team_wins.py once the
-    player-projection and cap layers exist -- this module doesn't care where
-    the ratings come from.
+  - Ratings are Elo-style point-differential proxies. The live pipeline
+    (run_real_league.py) sources them from market_ratings.py (consensus
+    sportsbook win totals, calibrated) rather than a bottom-up roster sum --
+    this module doesn't care where the ratings come from.
   - The schedule is a synthetic balanced round-robin rather than the real
     fixture list. Swap in the actual schedule CSV for production use.
   - Game outcomes use a standard logistic (Bradley-Terry) win probability
@@ -18,13 +18,17 @@ Deliberately simplified for a first pass:
     game-by-game randomness (schedule luck, injury streaks, etc.). This
     version doesn't inject that yet -- a reasonable v2 addition is a small
     per-team Gaussian "luck" term added to the rating each trial.
+
+NOTE: this module used to also provide monte_carlo_pick_distribution() /
+wins_to_draft_order(), built on the pre-2027 lottery (lottery_sim.py).
+Removed as dead code -- the live pipeline runs entirely on 2027+ "3-2-1"
+draft years now, via draft_pipeline_321.py's equivalents
+(monte_carlo_321_pick_distribution() / simulate_second_round_order()).
 """
 
 import random
 from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
-
-from lottery_sim import simulate_lottery
 
 
 @dataclass
@@ -97,37 +101,3 @@ def simulate_season(teams: Sequence[Team], rng: random.Random = random,
             wins[away] += 1
 
     return wins
-
-
-def wins_to_draft_order(wins: Dict[str, int], rng: random.Random = random) -> List[str]:
-    """
-    Converts a wins dict into a worst-to-best draft order. Ties are broken
-    randomly (matching the real NBA's coin-flip tiebreaker) via a pre-shuffle
-    before the stable sort.
-    """
-    names = list(wins.keys())
-    rng.shuffle(names)
-    return sorted(names, key=lambda n: wins[n])
-
-
-def monte_carlo_pick_distribution(teams: Sequence[Team], trials: int = 5000,
-                                   games_per_team: int = 82,
-                                   seed: int = None) -> Dict[str, Dict[int, int]]:
-    """
-    Runs `trials` full seasons + lottery draws end to end.
-    Returns {team_name: {pick_number: count_of_trials_landing_there}}.
-    """
-    rng = random.Random(seed)
-    n_teams = len(teams)
-    counts: Dict[str, Dict[int, int]] = {
-        t.name: {p: 0 for p in range(1, n_teams + 1)} for t in teams
-    }
-
-    for _ in range(trials):
-        wins = simulate_season(teams, rng=rng, games_per_team=games_per_team)
-        draft_order = wins_to_draft_order(wins, rng=rng)
-        picks = simulate_lottery(draft_order, rng=rng)
-        for name, pick in picks.items():
-            counts[name][pick] += 1
-
-    return counts

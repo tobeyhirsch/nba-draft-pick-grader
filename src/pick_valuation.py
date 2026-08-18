@@ -3,19 +3,41 @@ Pick valuation layer: converts a draft slot (or a probability distribution
 over slots, straight from lottery_sim / lottery_sim_321) into an expected
 surplus-value number.
 
-ASSUMPTION -- the value curve itself:
-There is no universal, agreed-upon "true" draft value curve. Public trade
-value charts (Kevin Pelton's, Bryan Frankel's SVA-based chart, various
-front-office internal versions) broadly agree on shape (steep drop-off in
-the top 5, flattening through the rest of the lottery, a long shallow tail
-through the second round) but differ on exact numbers, and none of them are
-reproduced here verbatim. `pick_value()` instead uses a documented
-PARAMETRIC APPROXIMATION -- an exponential-decay curve fit to roughly match
-that commonly observed shape, normalized to 100 at pick 1. This is meant to
-be replaced with a real regression once you have historical data (e.g.
-rookie-scale-cost-adjusted win shares or VORP by draft slot, regressed
-against pick number) -- the function signature is the contract the rest of
-the pipeline depends on, not the specific numbers inside it.
+VALUE CURVE -- now calibrated from real career-outcome data, not assumed:
+An earlier version of this module used a hand-tuned exponential-decay
+curve (no real data behind it, just matching the commonly-cited SHAPE of
+public trade value charts). `pick_value()` now instead comes from
+calibrate_pick_value.py, which fits a curve against 271 real first-round
+picks from the 2015-2023 draft classes (NBA_Draft_Picks_20152025.xlsx,
+user-supplied), each tagged with a subjective career-outcome tier
+(Superstar / Star-All-Star / Above-average starter / Contributor / Bust)
+based on All-Star selections and career Win Shares/BPM/VORP. See that
+script's docstring for the full method (tier->value-point assumption,
+curve fit, second-round discount) -- the short version:
+
+  - value(pick) = 3.218 + 53.284 / pick^0.7779, for picks 1-30, rescaled so
+    pick 1 = 100.0. This form (fast initial drop, long flattening tail)
+    matches what the data actually shows: Picks 1-5 average roughly TRIPLE
+    the value of Picks 6-30, which are themselves fairly flat -- there's no
+    strong further decline pick-by-pick once you're past the top 5. That's
+    a materially different (and more front-loaded) shape than the old
+    smooth exponential assumed.
+  - Picks 31-60 (second round) have NO data in the source spreadsheet --
+    it only covers first-round picks. The round-1 curve is extended past
+    pick 30 with a flat, documented 0.4x haircut (SECOND_ROUND_DISCOUNT)
+    reflecting non-guaranteed contracts and much lower NBA-rotation
+    conversion rates for second-rounders historically -- this produces a
+    real discontinuity right at the round boundary (pick 30 vs. 31), which
+    is directionally correct (the guaranteed-contract cliff between rounds
+    is a real, sudden drop in value, not a smooth curve through it).
+
+Like the exponential curve before it, this remains a documented
+APPROXIMATION, not a claim of precision: the tier->value-point mapping
+(TIER_VALUE) is a judgment call (the spreadsheet's tiers are ordinal, not
+cardinal), and the whole fit is against 9 draft classes' worth of outcomes,
+which is a real but limited sample (n=271, and top-heavy small-N buckets
+are visibly noisy -- see calibrate_pick_value.py's fit diagnostics). Re-run
+that script if you get a larger/updated dataset.
 
 Two related but different things you can compute with this module:
   1. pick_value(pick_number) -- value of a SPECIFIC, known slot.
@@ -36,24 +58,35 @@ Two related but different things you can compute with this module:
 
 from typing import Dict
 
-# Calibration: pick 1 = 100 (arbitrary units), decay rate chosen so the
-# curve roughly matches the commonly cited shape of public trade value
-# charts (steep through the lottery, flattens after ~pick 10-14).
+# Fitted from calibrate_pick_value.py -- see that script and this module's
+# docstring for the full derivation (271 real 2015-2023 first-round career
+# outcomes -> tier value points -> nonlinear curve fit).
+_CURVE_A = 53.284
+_CURVE_B = 0.7779
+_CURVE_C = 3.218
+_PICK1_RAW = _CURVE_C + _CURVE_A / (1 ** _CURVE_B)
+_SCALE = 100.0 / _PICK1_RAW  # normalizes pick 1 to exactly 100.0
+
+SECOND_ROUND_DISCOUNT = 0.4  # flat haircut past pick 30 -- no real data covers round 2, see docstring
+VALUE_FLOOR = 0.5            # no pick (even a throw-in second-rounder) is worth literally zero
+
+# Kept for any external code still referencing the old constant name.
 PICK1_VALUE = 100.0
-DECAY_RATE = 0.095   # tuned so pick 30 lands around 6-7, pick 60 near 1
-VALUE_FLOOR = 0.5    # no pick (even a throw-in second-rounder) is worth literally zero
 
 
 def pick_value(pick_number: int) -> float:
     """
-    Approximate surplus value of a single, known draft slot.
-    Values are on an arbitrary 0-100 scale (pick 1 = 100), meant for
-    RELATIVE comparison between picks/trades, not as a dollar or WAR figure.
+    Data-calibrated surplus value of a single, known draft slot (see module
+    docstring for the fit). Values are on an arbitrary 0-100 scale (pick 1
+    = 100), meant for RELATIVE comparison between picks/trades, not as a
+    dollar or WAR figure.
     """
     if pick_number < 1:
         raise ValueError("pick_number must be >= 1")
-    raw = PICK1_VALUE * ((1 - DECAY_RATE) ** (pick_number - 1))
-    return max(raw, VALUE_FLOOR)
+    raw = _CURVE_C + _CURVE_A / (pick_number ** _CURVE_B)
+    if pick_number > 30:
+        raw *= SECOND_ROUND_DISCOUNT
+    return max(_SCALE * raw, VALUE_FLOOR)
 
 
 def expected_value_of_distribution(pick_probabilities: Dict[int, float]) -> float:

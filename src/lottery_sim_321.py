@@ -36,17 +36,23 @@ INTERPRETATION NOTE -- the play-in format assumed here:
   league's full rulebook language, and is easy to swap out if a more
   precise structure is published later.
 
+  - Multi-year pick restrictions ("no team's own pick can be #1 overall in
+    consecutive drafts, or a top-5 pick in 3 consecutive drafts") ARE now
+    modeled -- see pick_restrictions_321.py, wired in below via the
+    optional `history` parameter on draw_321_order()/simulate_321_lottery().
+    Passing no history (the default) reproduces the old behavior exactly.
+
 NOT modeled here (out of scope for a single-season lottery draw):
-  - Multi-year pick restrictions (no team's own pick can be #1 overall in
-    consecutive drafts, or a top-5 pick in 3 consecutive drafts) -- this
-    needs draft-history state carried across simulated seasons.
   - The ban on top-12-through-15 protections on newly traded picks -- that's
-    a cap-sheet / pick-ownership rule, not part of the draw mechanics.
+    a cap-sheet / pick-ownership rule (applies at trade time), not part of
+    the draw mechanics.
   - The league's expanded disciplinary authority to adjust odds/positions.
 """
 
 import random
-from typing import Dict, List, NamedTuple, Sequence
+from typing import Dict, List, NamedTuple, Optional, Sequence
+
+from pick_restrictions_321 import enforce_pick_restrictions
 
 
 class LotteryEntrant(NamedTuple):
@@ -119,9 +125,12 @@ def _draw_unconstrained_order(pool: Sequence[LotteryEntrant], rng: random.Random
     return order
 
 
-def draw_321_order(pool: Sequence[LotteryEntrant], rng: random.Random = random) -> List[str]:
+def draw_321_order(pool: Sequence[LotteryEntrant], rng: random.Random = random,
+                    history: Optional[Dict[str, List[int]]] = None) -> List[str]:
     """
-    Runs the full 16-pick weighted draw, then applies floor protections.
+    Runs the full 16-pick weighted draw, then applies floor protections,
+    then (if `history` is given) applies the "no repeat #1, no 3-straight
+    top-5" pick restrictions from pick_restrictions_321.py.
 
     Algorithm: draw an unconstrained order, then rebuild it slot by slot.
     At each slot, check every distinct floor value still owed among
@@ -130,7 +139,16 @@ def draw_321_order(pool: Sequence[LotteryEntrant], rng: random.Random = random) 
     before F, one of them must be forced into the current slot instead of
     waiting. This generalizes to any number of simultaneous protections,
     though today's rules only use one nontrivial floor (12, for relegated
-    teams).
+    teams). Pick restrictions are applied AFTER floor protections, as a
+    final pass -- see pick_restrictions_321.py's module docstring for why
+    that ordering is safe (restrictions only ever push a team later, never
+    earlier, so they can't reopen a floor violation).
+
+    `history`: {team: [own_pick_two_years_ago, own_pick_last_year]}, e.g.
+    pick_restrictions_321.DEFAULT_2027_HISTORY for simulating the 2027
+    draft. Omit (default None) to skip restriction enforcement entirely --
+    e.g. for years/scenarios where you don't have real or carried-forward
+    history to seed it with.
     """
     unconstrained = _draw_unconstrained_order(pool, rng)
     floor_by_team = {e.name: e.floor_pick for e in pool}
@@ -151,13 +169,16 @@ def draw_321_order(pool: Sequence[LotteryEntrant], rng: random.Random = random) 
         final_order.append(chosen)
         remaining.remove(chosen)
 
+    if history is not None:
+        final_order = enforce_pick_restrictions(final_order, history)
+
     return final_order
 
 
-def simulate_321_lottery(pool: Sequence[LotteryEntrant],
-                          rng: random.Random = random) -> Dict[str, int]:
+def simulate_321_lottery(pool: Sequence[LotteryEntrant], rng: random.Random = random,
+                          history: Optional[Dict[str, List[int]]] = None) -> Dict[str, int]:
     """Returns {team_name: pick_number} for the 16 lottery teams (picks 1-16)."""
-    order = draw_321_order(pool, rng=rng)
+    order = draw_321_order(pool, rng=rng, history=history)
     return {name: i + 1 for i, name in enumerate(order)}
 
 

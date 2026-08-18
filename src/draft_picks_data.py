@@ -175,7 +175,16 @@ TEAM_FUTURE_PICKS: Dict[str, Dict[int, str]] = {
     },
     "Memphis Grizzlies": {
         2026: "MEM 1st (#3), PHX 1st (#16), IND 2nd (#32)",
-        2027: "CLE/MIN/UTA* (Most Favorable) 1st, LAL 1st (If #5-30), MEM 1st, LAL 2nd (If 2027 LAL 1st is #1-4). *2027 UTA 1st cannot be Top-5 (protected via prior years' Top-5 rule)",
+        # NOTE: Utah's piece of this swap (UTA's own 2027 1st) is subject to
+        # the 3-2-1 lottery's "no 3-straight top-5" pick restriction --
+        # Utah was top-5 in both the real 2025 and 2026 drafts -- so it
+        # cannot land top-5 in 2027. This is now enforced by SIMULATION
+        # (pick_restrictions_321.DEFAULT_2027_HISTORY passed into the
+        # 2027 lottery draw), not by a static annotation here -- see that
+        # module for why a hardcoded "*2027 UTA 1st cannot be Top-5" note
+        # would just go stale and isn't needed for the parser to resolve
+        # this swap correctly.
+        2027: "CLE/MIN/UTA (Most Favorable) 1st, LAL 1st (If #5-30), MEM 1st, LAL 2nd (If 2027 LAL 1st is #1-4)",
         2028: "MEM 1st",
         2029: "MEM/ORL (If #3-30) (More Favorable) 1st, ORL 2nd (If 2029 ORL 1st is #1-2), POR 2nd",
         2030: "MEM/(PHX/WAS (Less Favorable)) (More Favorable) 1st, ORL 1st, MEM 2nd (If #31-50)",
@@ -315,7 +324,11 @@ TEAM_FUTURE_PICKS: Dict[str, Dict[int, str]] = {
     },
     "Utah Jazz": {
         2026: "UTA 1st (#2)",
-        2027: "CLE/MIN/UTA* (2nd Favorable) 1st, BOS/ORL (More Favorable) 2nd, DEN 2nd, LAC 2nd. *2027 UTA 1st cannot be Top-5 (protected via prior years' Top-5 rule)",
+        # NOTE: Utah's own 2027 1st (the "UTA" leg of the CLE/MIN/UTA swap
+        # below) cannot land top-5 -- Utah was top-5 in both real 2025 and
+        # 2026 -- enforced via simulation, see the matching note on Memphis
+        # Grizzlies' 2027 entry above.
+        2027: "CLE/MIN/UTA (2nd Favorable) 1st, BOS/ORL (More Favorable) 2nd, DEN 2nd, LAC 2nd",
         2028: "CLE/UTA (More Favorable) 1st, (CHA/LAC (Less Favorable))/DET (If #31-55)/MIA (If 2027 DAL 1st is #3-30)/NYK (Least Favorable) 2nd, CLE 2nd",
         2029: "CLE/MIN (If #6-30)/UTA (Most Favorable) 1st, (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd",
         2030: "UTA 1st, LAC/UTA (Less Favorable) 2nd",
@@ -325,7 +338,10 @@ TEAM_FUTURE_PICKS: Dict[str, Dict[int, str]] = {
     },
     "Washington Wizards": {
         2026: "WAS 1st (#1), MIN 2nd (#51), OKC 2nd (#60)",
-        2027: "WAS 1st* (cannot be #1 due to being #1 in previous draft), BKN/DAL (More Favorable) 2nd, GS/PHX (Less Favorable) 2nd",
+        # NOTE: Washington's own 2027 1st cannot be the #1 pick -- Washington
+        # had the real 2026 #1 -- enforced via simulation (see
+        # pick_restrictions_321.py) rather than a static annotation.
+        2027: "WAS 1st, BKN/DAL (More Favorable) 2nd, GS/PHX (Less Favorable) 2nd",
         2028: "(BKN/PHI (If #9-30)/PHX (Least Favorable))/(MIL/POR (Less Favorable)/WAS (Most Favorable)), DEN 2nd (If #34-60), LAL/WAS (Less Favorable) 2nd",
         2029: "BOS/MIL/POR (2nd Favorable) 1st, WAS 1st, LAL 2nd",
         2030: "PHX/WAS (More Favorable) 1st, PHX/POR (Less Favorable) 2nd",
