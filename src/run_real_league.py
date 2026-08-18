@@ -9,8 +9,13 @@ Run with:
   python run_real_league.py                 # grade every team (slow, see below)
   python run_real_league.py "Boston Celtics" "Atlanta Hawks"   # grade just these
 
-Writes a full results report to league_pick_grades.md in addition to
-printing a summary.
+Writes a full results report to league_pick_grades.md, and the projected
+standings each year's picks are actually simulated from to
+projected_standings.md (see build_projected_standings), in addition to
+printing a summary. 2027 and 2033's standings will come out identical --
+both use the same base market ratings with the same seed (2033 falls
+outside darko_ratings.py's evolved-ratings window, see its docstring), not
+a bug.
 
 PERFORMANCE NOTE: pick_resolver.build_pick_assets() runs its own dedicated
 Monte Carlo batch (TRIALS_PER_TEAM trials) for each team's specific pick
@@ -35,9 +40,10 @@ for a fast full-league smoke test.
 """
 
 import os
+import re
 import sys
 import time
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from market_ratings import load_market_win_totals, build_calibrated_teams
 from conferences import TEAM_CONFERENCE
@@ -45,7 +51,7 @@ from draft_picks_data import TEAM_FUTURE_PICKS
 from pick_resolver import build_pick_assets
 from pick_grading import grade_pick_portfolio
 from pick_restrictions_321 import DEFAULT_2027_HISTORY
-from standings_sim import Team
+from standings_sim import Team, expected_wins
 from data_paths import find_data_file
 from darko_ratings import (
     load_darko_players, all_teams_net_ratings, fit_darko_to_elo,
@@ -59,7 +65,10 @@ MARKET_XLSX = find_data_file("market_win_totals.xlsx", os.path.dirname(os.path.a
 CALIBRATION_SEED = 11
 GRADING_SEED = 5
 TRIALS_PER_TEAM = 2000  # lower = faster/noisier, higher = slower/tighter
+STANDINGS_TRIALS = 2000  # trials per year for the projected-standings report (build_projected_standings)
 RESULTS_FILE = "league_pick_grades.md"
+STANDINGS_FILE = "projected_standings.md"
+FINAL_DRAFT_YEAR = FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET  # 2033 -- outside darko_ratings.py's window, falls back to base
 
 
 def build_real_league() -> List[Team]:
@@ -95,6 +104,69 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
     }
 
 
+def build_projected_standings(base_teams: Sequence[Team], teams_by_year: Dict[int, List[Team]],
+                               trials: int = STANDINGS_TRIALS, seed: int = CALIBRATION_SEED
+                               ) -> Dict[int, Dict[str, float]]:
+    """
+    {draft_year: {team_name: avg_wins}} for every year this pipeline
+    actually simulates a lottery for (2027 through FINAL_DRAFT_YEAR) --
+    the SAME ratings that drive every pick distribution elsewhere (grade_team,
+    build_pick_assets), run through standings_sim.expected_wins() with no
+    lottery/draft-order machinery attached, so this is a direct readout of
+    "what does the model think the standings look like," not a separately
+    re-derived number that could drift out of sync with the pick grades.
+
+    2027 uses base_teams (real 2026-27 market ratings) directly. 2028-2032
+    use teams_by_year's DARKO+longevity-evolved ratings. FINAL_DRAFT_YEAR
+    (2033) falls back to base_teams, same as everywhere else this fallback
+    happens (see build_future_year_teams and pick_resolver.build_pick_assets).
+    """
+    years = [FIRST_DRAFT_YEAR_COVERED - 1] + list(range(FIRST_DRAFT_YEAR_COVERED,
+                                                          FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET)) + [FINAL_DRAFT_YEAR]
+    result: Dict[int, Dict[str, float]] = {}
+    for year in years:
+        league = teams_by_year.get(year, base_teams)
+        result[year] = expected_wins(league, trials=trials, seed=seed)
+    return result
+
+
+def write_standings_report(standings_by_year: Dict[int, Dict[str, float]], conferences: Dict[str, str],
+                            path: str) -> None:
+    lines = ["# Projected Standings -- Underlying the Pick Value Projections", ""]
+    lines.append(f"Average simulated wins per team per season ({STANDINGS_TRIALS} trials each), for the "
+                 f"SAME ratings that drive every pick distribution/grade in {RESULTS_FILE}: real 2026-27 "
+                 f"market ratings for {FIRST_DRAFT_YEAR_COVERED - 1}, DARKO+longevity-evolved ratings "
+                 f"(darko_ratings.py) for {FIRST_DRAFT_YEAR_COVERED}-{FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET - 1}, "
+                 f"and the flat {FIRST_DRAFT_YEAR_COVERED - 1} market ratings again for "
+                 f"{FINAL_DRAFT_YEAR} (outside darko_ratings.py's window -- see its module docstring for why "
+                 f"the window stops where it does). These are regular-season win projections only -- no "
+                 f"play-in/lottery/draft-order logic runs here, that all happens downstream in "
+                 f"draft_pipeline_321.py using these same ratings.")
+    lines.append("")
+
+    for year in sorted(standings_by_year):
+        wins = standings_by_year[year]
+        lines.append(f"## {year - 1}-{str(year)[2:]} season (feeds the {year} draft)")
+        lines.append("")
+        for conf in ["East", "West"]:
+            conf_teams = sorted((n for n in wins if conferences.get(n) == conf), key=lambda n: -wins[n])
+            if not conf_teams:
+                continue
+            leader_wins = wins[conf_teams[0]]
+            lines.append(f"### {conf}")
+            lines.append("")
+            lines.append("| Rank | Team | Avg W | Avg L | GB |")
+            lines.append("|---|---|---|---|---|")
+            for i, name in enumerate(conf_teams, 1):
+                w = wins[name]
+                gb = leader_wins - w
+                lines.append(f"| {i} | {name} | {w:.1f} | {82 - w:.1f} | {gb:.1f} |")
+            lines.append("")
+
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+
+
 def grade_team(team_name: str, teams: Sequence[Team], teams_by_year: Dict[int, List[Team]] = None,
                trials: int = TRIALS_PER_TEAM) -> Tuple[List[dict], List[tuple]]:
     # The market win totals this league is calibrated from are the 2026-27
@@ -116,6 +188,35 @@ def grade_team(team_name: str, teams: Sequence[Team], teams_by_year: Dict[int, L
     return graded, unresolved
 
 
+def pick_round(label: str) -> str:
+    """
+    "1st" or "2nd", read off a graded pick's label. Every label this
+    pipeline generates embeds its round as a standalone "1st"/"2nd" token
+    (see pick_resolver.py's `label = f"{year} {team_code} {round_str}..."`
+    and swap_resolver.swap_to_pick_asset's equivalent) -- this doesn't
+    re-derive anything, it just reads that token back out for report
+    presentation. Returns "Unknown" (and the label is still shown, just
+    grouped separately) if a label somehow doesn't carry one, rather than
+    silently mis-bucketing it.
+    """
+    if re.search(r"\b1st\b", label):
+        return "1st"
+    if re.search(r"\b2nd\b", label):
+        return "2nd"
+    return "Unknown"
+
+
+def _split_by_round(graded: List[dict]) -> Dict[str, List[dict]]:
+    by_round: Dict[str, List[dict]] = {"1st": [], "2nd": [], "Unknown": []}
+    for g in graded:
+        by_round[pick_round(g["label"])].append(g)
+    return by_round
+
+
+def _avg_grade(picks: List[dict]) -> Optional[float]:
+    return sum(g["grade"] for g in picks) / len(picks) if picks else None
+
+
 def write_report(all_results: Dict[str, Tuple[List[dict], List[tuple]]], path: str) -> None:
     lines = ["# NBA Draft Pick Grades -- Full League Run", ""]
     lines.append(f"2027-draft ratings calibrated from consensus market win totals (DraftKings/"
@@ -124,35 +225,63 @@ def write_report(all_results: Dict[str, Tuple[List[dict], List[tuple]]], path: s
                  f"longevity data instead, calibrated against those same market ratings "
                  f"(darko_ratings.py); 2033 falls back to the flat 2026-27 market ratings. "
                  f"Picks graded 1-10 via the swap-resolved pipeline. {TRIALS_PER_TEAM} simulation "
-                 f"trials per team per draft year.")
+                 f"trials per team per draft year. Grades and averages below are split by round --"
+                 f" 2nd-round picks carry the pick_valuation.py 0.4x haircut baked into their value, "
+                 f"so mixing rounds into one average would understate 1st-round strength and "
+                 f"overstate 2nd-round weakness relative to each other.")
     lines.append("")
 
-    lines.append("## League summary: average pick grade by team")
+    lines.append("## League summary: average pick grade by team, split by round")
     lines.append("")
-    lines.append("| Team | Avg grade | Picks graded | Unresolved |")
-    lines.append("|---|---|---|---|")
+    lines.append("| Team | Avg 1st-rd grade | 1st-rd picks | Avg 2nd-rd grade | 2nd-rd picks | Unresolved |")
+    lines.append("|---|---|---|---|---|---|")
     summary_rows = []
     for name, (graded, unresolved) in all_results.items():
-        avg = sum(g["grade"] for g in graded) / len(graded) if graded else 0.0
-        summary_rows.append((name, avg, len(graded), len(unresolved)))
-    summary_rows.sort(key=lambda r: -r[1])
-    for name, avg, n_graded, n_unresolved in summary_rows:
-        lines.append(f"| {name} | {avg:.2f} | {n_graded} | {n_unresolved} |")
+        by_round = _split_by_round(graded)
+        avg1, avg2 = _avg_grade(by_round["1st"]), _avg_grade(by_round["2nd"])
+        summary_rows.append((name, avg1, len(by_round["1st"]), avg2, len(by_round["2nd"]), len(unresolved)))
+    # Rank by 1st-round average (the higher-value round); teams with no
+    # resolved 1st-round picks at all sort to the bottom rather than
+    # crashing on a None comparison.
+    summary_rows.sort(key=lambda r: (r[1] is None, -(r[1] or 0)))
+    for name, avg1, n1, avg2, n2, n_unresolved in summary_rows:
+        avg1_str = f"{avg1:.2f}" if avg1 is not None else "--"
+        avg2_str = f"{avg2:.2f}" if avg2 is not None else "--"
+        lines.append(f"| {name} | {avg1_str} | {n1} | {avg2_str} | {n2} | {n_unresolved} |")
     lines.append("")
 
     for name, (graded, unresolved) in all_results.items():
         lines.append(f"## {name}")
         lines.append("")
-        lines.append("| Pick | Grade | Label |")
-        lines.append("|---|---|---|")
-        for g in sorted(graded, key=lambda g: -g["grade"]):
-            lines.append(f"| {g['label']} | {g['grade']:.1f} | {g['grade_label']} |")
-        if unresolved:
+        by_round = _split_by_round(graded)
+
+        for round_label in ["1st", "2nd"]:
+            picks = by_round[round_label]
+            avg = _avg_grade(picks)
+            lines.append(f"### {round_label} Round Picks"
+                         + (f" (avg grade {avg:.2f})" if avg is not None else " (none)"))
             lines.append("")
+            if picks:
+                lines.append("| Pick | Grade | Label |")
+                lines.append("|---|---|---|")
+                for g in sorted(picks, key=lambda g: -g["grade"]):
+                    lines.append(f"| {g['label']} | {g['grade']:.1f} | {g['grade_label']} |")
+                lines.append("")
+
+        if by_round["Unknown"]:
+            lines.append(f"### Round could not be determined from label ({len(by_round['Unknown'])})")
+            lines.append("")
+            lines.append("| Pick | Grade | Label |")
+            lines.append("|---|---|---|")
+            for g in sorted(by_round["Unknown"], key=lambda g: -g["grade"]):
+                lines.append(f"| {g['label']} | {g['grade']:.1f} | {g['grade_label']} |")
+            lines.append("")
+
+        if unresolved:
             lines.append(f"**Unresolved ({len(unresolved)}):**")
             for year, text, reason in unresolved:
                 lines.append(f"- {year}: {text} -- *{reason}*")
-        lines.append("")
+            lines.append("")
 
     with open(path, "w") as f:
         f.write("\n".join(lines))
@@ -172,6 +301,14 @@ def main():
     teams_by_year = build_future_year_teams(teams)
     print(f"  done in {time.time() - t0:.1f}s")
 
+    print(f"\nProjecting standings for {FIRST_DRAFT_YEAR_COVERED - 1}-{FINAL_DRAFT_YEAR} "
+          f"({STANDINGS_TRIALS} trials/year) -- the same ratings driving every pick below...")
+    t0 = time.time()
+    conferences = {t.name: t.conference for t in teams}
+    standings_by_year = build_projected_standings(teams, teams_by_year)
+    write_standings_report(standings_by_year, conferences, STANDINGS_FILE)
+    print(f"  done in {time.time() - t0:.1f}s -- written to {STANDINGS_FILE}")
+
     print(f"\nGrading {len(requested)} team(s), {TRIALS_PER_TEAM} trials each...")
     t0 = time.time()
     all_results: Dict[str, Tuple[List[dict], List[tuple]]] = {}
@@ -184,16 +321,20 @@ def main():
     write_report(all_results, RESULTS_FILE)
     print(f"\nFull report written to {RESULTS_FILE}")
 
-    print("\n=== League summary: average pick grade by team ===")
+    print("\n=== League summary: average pick grade by team, split by round ===")
     summary_rows = []
     for name in requested:
         graded, _ = all_results[name]
-        if graded:
-            avg = sum(g["grade"] for g in graded) / len(graded)
-            summary_rows.append((name, avg, len(graded)))
-    summary_rows.sort(key=lambda r: -r[1])
-    for name, avg, n in summary_rows:
-        print(f"  {name:<28} avg grade {avg:5.2f}  ({n} picks graded)")
+        by_round = _split_by_round(graded)
+        avg1, avg2 = _avg_grade(by_round["1st"]), _avg_grade(by_round["2nd"])
+        if avg1 is not None or avg2 is not None:
+            summary_rows.append((name, avg1, len(by_round["1st"]), avg2, len(by_round["2nd"])))
+    summary_rows.sort(key=lambda r: (r[1] is None, -(r[1] or 0)))
+    for name, avg1, n1, avg2, n2 in summary_rows:
+        avg1_str = f"{avg1:5.2f}" if avg1 is not None else " --  "
+        avg2_str = f"{avg2:5.2f}" if avg2 is not None else " --  "
+        print(f"  {name:<28} 1st-rd avg {avg1_str} ({n1:>2} picks)   "
+              f"2nd-rd avg {avg2_str} ({n2:>2} picks)")
 
 
 if __name__ == "__main__":

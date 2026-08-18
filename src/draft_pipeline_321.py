@@ -1,7 +1,11 @@
 """
 End-to-end 2027+ pipeline: simulate a season, seed both conferences,
 resolve the single 7-vs-8 play-in game, build the 3-2-1 ball pool, and draw
-the full 30-team draft order.
+the full 60-pick draft order -- round 1 via the 3-2-1 lottery
+(lottery_sim_321.py), round 2 via the 2027+ second-round snake rule (see
+simulate_second_round_order() below): the top 16 picks of round 2 mirror
+the round-1 lottery order in exact reverse, the remaining 14 continue
+reverse standings off the playoff teams.
 
 Requires each Team to have a `conference` set ("East" or "West"), 15 teams
 per conference.
@@ -105,19 +109,51 @@ def simulate_321_draft(teams: Sequence[Team], rng: random.Random = random,
     return picks
 
 
-def simulate_second_round_order(wins: Dict[str, int], rng: random.Random = random) -> Dict[str, int]:
+def simulate_second_round_order(first_round: Dict[str, int], wins: Dict[str, int]) -> Dict[str, int]:
     """
-    Second-round picks (31-60), given the SAME season's wins dict used for
-    the first round. Real NBA mechanics: the lottery draw only reshuffles
-    the FIRST round -- the second round is always a straight worst-record-
-    first snake off the regular-season standings, no lottery involved. Ties
-    broken randomly (pre-shuffle before the stable sort), same convention as
-    standings_sim.wins_to_draft_order.
+    Second-round picks (31-60), given the SAME season's first-round pick
+    numbers and wins dict used for round 1. Rule effective starting the
+    2027 draft (NBA Board of Governors-approved change alongside the 3-2-1
+    lottery format): the second round is no longer a plain continuation of
+    reverse standings -- the top half is a SNAKE off the round-1 lottery
+    result instead. Two groups:
+
+    Picks 31-46 (the top 16 of round 2, one per LOTTERY team): assigned in
+    EXACT REVERSE of the round-1 lottery order. The team that picked 16th
+    in round 1 picks 31st (first in round 2); the team picking 1st overall
+    picks last among this group, 46th. Formula: second_round_pick = 47 -
+    first_round_pick, for every team with a first-round pick in 1-16.
+
+    Picks 47-60 (the remaining 14 slots, one per non-lottery PLAYOFF team,
+    first-round picks 17-30): same worst-record-first direction as their
+    own round-1 order, but ties broken in REVERSE order of the teams'
+    first-round positions -- i.e. whichever tied team picked LATER (a
+    higher first-round slot) in round 1 picks EARLIER here in round 2, so a
+    tiebreak loss in one round becomes a tiebreak win in the other instead
+    of the same team losing every tiebreak both rounds.
+
+    No RNG needed here (unlike the pre-2027-rule-change version of this
+    function): every team's first-round pick number is already a unique
+    integer 1-30 by the time this runs (see _simulate_321_draft_core), so
+    the (wins, -first_round_pick) sort key below is always a total order --
+    there's no remaining tie left to break randomly.
     """
-    names = list(wins.keys())
-    rng.shuffle(names)
-    order = sorted(names, key=lambda n: wins[n])  # worst record = pick 31
-    return {name: 31 + i for i, name in enumerate(order)}
+    lottery_teams = {name: pick for name, pick in first_round.items() if pick <= 16}
+    playoff_teams = {name: pick for name, pick in first_round.items() if pick >= 17}
+
+    second_round: Dict[str, int] = {}
+
+    # Picks 31-46: exact reverse of the round-1 lottery order.
+    for name, pick in lottery_teams.items():
+        second_round[name] = 47 - pick
+
+    # Picks 47-60: playoff teams, worst record first; ties broken by
+    # REVERSE first-round position (see docstring).
+    ordered = sorted(playoff_teams, key=lambda n: (wins[n], -first_round[n]))
+    for i, name in enumerate(ordered):
+        second_round[name] = 47 + i
+
+    return second_round
 
 
 def simulate_321_draft_full(teams: Sequence[Team], rng: random.Random = random,
@@ -125,16 +161,18 @@ def simulate_321_draft_full(teams: Sequence[Team], rng: random.Random = random,
                              history: Optional[Dict[str, List[int]]] = None) -> Dict[str, int]:
     """
     Full 60-pick draft order for one simulated season: picks 1-30 via the
-    3-2-1 lottery mechanism, picks 31-60 via straight reverse-standings
-    order (no lottery in round 2). Both rounds are derived from the SAME
-    simulated season, so a team's first- and second-round outcomes stay
-    correlated within a trial -- needed for swap_resolver.py, since some
-    swap language spans both rounds' picks for the same team pair.
-    `history`: see _simulate_321_draft_core()'s docstring; pick restrictions
-    only ever affect first-round slots 1-5, never the second round.
+    3-2-1 lottery mechanism, picks 31-60 via the 2027+ second-round snake
+    (see simulate_second_round_order() -- top 16 of round 2 mirror the
+    round-1 lottery order in reverse, the rest continue reverse standings).
+    Both rounds are derived from the SAME simulated season, so a team's
+    first- and second-round outcomes stay correlated within a trial --
+    needed for swap_resolver.py, since some swap language spans both
+    rounds' picks for the same team pair. `history`: see
+    _simulate_321_draft_core()'s docstring; pick restrictions only ever
+    affect first-round slots 1-5, never the second round.
     """
     wins, first_round = _simulate_321_draft_core(teams, rng=rng, games_per_team=games_per_team, history=history)
-    second_round = simulate_second_round_order(wins, rng=rng)
+    second_round = simulate_second_round_order(first_round, wins)
     return {**first_round, **second_round}
 
 
@@ -200,7 +238,7 @@ def joint_pick_number_trials(teams: Sequence[Team], team_names_of_interest: Sequ
     results: Dict[str, Dict[str, List[int]]] = {n: {"1st": [], "2nd": []} for n in names_of_interest}
     for _ in range(trials):
         wins, first_round = _simulate_321_draft_core(teams, rng=rng, games_per_team=games_per_team, history=history)
-        second_round = simulate_second_round_order(wins, rng=rng)
+        second_round = simulate_second_round_order(first_round, wins)
         for n in names_of_interest:
             results[n]["1st"].append(first_round[n])
             results[n]["2nd"].append(second_round[n])

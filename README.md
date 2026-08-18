@@ -12,7 +12,10 @@ more team names to grade just those teams; with no arguments it grades all
 count -- up from ~2 minutes before `darko_ratings.py` was wired in, since a
 team's picks now run a separate simulation batch per distinct draft year
 they span rather than one shared batch (see `run_real_league.py`'s
-PERFORMANCE NOTE). Writes `league_pick_grades.md`.
+PERFORMANCE NOTE). Writes `league_pick_grades.md` (pick grades, split by
+round) and `projected_standings.md` (the actual projected win-loss
+standings, 2027 through 2033, for the exact same ratings that produced
+those grades -- see "Projected standings" below).
 
 ## Pipeline, in order
 
@@ -127,9 +130,14 @@ they aren't wired into the automatic league-wide run.
   can't get pick 1 (they had it in 2026), Utah can't land top-5 (they did
   in both 2025 and 2026).
 - **`draft_pipeline_321.py`** -- ties a season simulation to the play-in
-  game, the lottery draw, and the (lottery-free, straight-reverse-standings)
-  second round, all from one simulated season so a team's first- and
-  second-round outcomes stay correlated. `joint_pick_number_trials()` is the
+  game, the lottery draw, and the second round, all from one simulated
+  season so a team's first- and second-round outcomes stay correlated.
+  Round 2 uses the rule effective the 2027 draft onward
+  (`simulate_second_round_order()`): picks 31-46 are a SNAKE off the
+  round-1 lottery order (the team that picked 16th in round 1 picks 31st;
+  the team that picked 1st picks 46th), and picks 47-60 continue reverse
+  standings among the playoff teams, with ties broken in reverse order of
+  those teams' round-1 positions. `joint_pick_number_trials()` is the
   function `swap_resolver.py` depends on: it runs many simulated seasons and
   returns every requested team's pick numbers **from the same trials**,
   preserving the correlation swap comparisons need (two teams' records
@@ -200,12 +208,37 @@ they aren't wired into the automatic league-wide run.
 - **`run_real_league.py`** -- the real entry point. Calibrates all 30
   teams' ratings from the market spreadsheet, grades every pick every team
   owns (seeding the 2027 pick restrictions with real history), and writes
-  `league_pick_grades.md`.
+  `league_pick_grades.md` and `projected_standings.md`.
 - **`test_swap_resolver_integration.py`** -- end-to-end regression check:
   builds a real 30-team league, resolves every team's full pick portfolio,
   and sanity-checks every swap's resolved distribution (probabilities sum
   to ~1, every pick number lands in the correct round's 1-30/31-60 range).
   Run this after changing anything in the resolution or simulation layers.
+
+### Projected standings
+
+`league_pick_grades.md` reports pick VALUES, not the standings those values
+are simulated from -- `projected_standings.md` fills that in.
+`run_real_league.py`'s `build_projected_standings()` takes the exact same
+ratings object used for every pick grade (`teams` for 2027,
+`teams_by_year[year]` for 2028-2032, `teams` again for 2033) and runs each
+through `standings_sim.expected_wins()` -- plain Monte Carlo win-total
+averaging, no lottery or draft-order logic attached -- so the standings
+shown are a direct readout of what's actually driving the grades, not a
+separately-derived number that could quietly drift out of sync with them.
+Each season gets its own East/West table (rank, average wins/losses, games
+back), matching how real NBA standings are displayed.
+
+Two things worth knowing before reading it: 2027's and 2033's tables come
+out byte-identical -- both use the unmodified 2026-27 market ratings with
+the same random seed, since 2033 falls outside `darko_ratings.py`'s
+5-year evolved-ratings window (see that module's docstring for why the
+window stops at 2032). And every year's average wins already reflect
+`darko_ratings.py`'s mean-reversion behavior (a team's rating drifts toward
+league-average as its current DPM-weighted core is expected to retire) --
+so a team's standings sliding toward .500 in the later years isn't the
+model predicting a specific decline, it's the visible consequence of that
+assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 
 ## Known gaps (honest status, not hidden)
 

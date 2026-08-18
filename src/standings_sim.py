@@ -101,3 +101,25 @@ def simulate_season(teams: Sequence[Team], rng: random.Random = random,
             wins[away] += 1
 
     return wins
+
+
+def expected_wins(teams: Sequence[Team], trials: int = 2000, seed: int = None,
+                   games_per_team: int = 82) -> Dict[str, float]:
+    """
+    Average simulated win total per team across `trials` seasons -- the
+    plain "what does the standings look like" readout for a given ratings
+    snapshot, with no lottery/draft-order machinery attached. Used by
+    run_real_league.py to surface the actual standings a given year's
+    ratings imply (market_ratings.py's for 2027, darko_ratings.py's evolved
+    ratings for 2028-2032) -- i.e. exactly what the underlying game
+    simulator predicts for the SAME ratings that drive every pick
+    distribution elsewhere in this pipeline, not a separately-derived
+    number that could drift out of sync with it.
+    """
+    rng = random.Random(seed)
+    totals = {t.name: 0.0 for t in teams}
+    for _ in range(trials):
+        wins = simulate_season(teams, rng=rng, games_per_team=games_per_team)
+        for name, w in wins.items():
+            totals[name] += w
+    return {name: total / trials for name, total in totals.items()}
