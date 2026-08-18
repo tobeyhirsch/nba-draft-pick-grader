@@ -25,16 +25,37 @@ market_win_totals.xlsx                    PlayerSalariesCSV.csv
         v                                          v
 market_ratings.py                          cap_sheet_data.py
 (sportsbook lines -> Elo ratings,          (5-year contracts, all 30 teams)
- 2027 draft only)
-        |
-        +-------------------+
-        |                   v
+ 2027 draft only)                                  |
+        |                                          v
+        |                                  roster_continuity.py  (NEW --
+        |                                  "still under contract to THIS
+        |                                  team" signal, from real
+        |                                  contract years/options; name-
+        |                                  matched to DARKO players --
+        |                                  see its docstring for a Team-
+        |                                  column mismatch it surfaced)
+        |                                          |
+        +-------------------+                      |
+        |                   v                      |
         |         darkodpmleaderboard.csv + darkolongevityprojections.csv
-        |                   |
-        |                   v
-        |         darko_ratings.py  (DPM+longevity, calibrated
-        |         against market_ratings.py's Elo -> evolved
-        |         ratings for the 2028-2032 drafts)
+        |                   |                      |
+        |                   v                      |
+        |         multi_year_advanced_stats.csv (built by                |
+        |         build_multi_year_stats.py from the user-supplied       |
+        |         Advanced Stats.xlsx: DARKO/BPM/VORP/PER/age, 2023-24   |
+        |         through 2025-26)                                      |
+        |                   |                                           |
+        |                   v                                           |
+        |         player_value_regression.py  (LIVE -- multi-year       |
+        |         DARKO/BPM/VORP+age regression, r^2~=0.64, upgrades    |
+        |         404/530 players with 3 seasons on file to a           |
+        |         regression-projected next-season DPM; the rest keep   |
+        |         their raw current-season DPM)                        |
+        |                   |                                           |
+        |                   v                                           |
+        |         darko_ratings.py  (DPM+longevity+continuity,          |
+        |         calibrated against market_ratings.py's Elo -> <-------+
+        |         evolved ratings for the 2028-2032 drafts)
         |                   |
         v                   v
 conferences.py  ---->  standings_sim.py  <----  draft_picks_data.py
@@ -90,6 +111,20 @@ they aren't wired into the automatic league-wide run.
   identical `(Player, Team)` keys against the DPM file), each with a 0-100
   "still an NBA player" probability at +1 through +15 years out. Input to
   `darko_ratings.py`.
+- **`multi_year_advanced_stats_TEMPLATE.csv`** -- NOT loaded by anything;
+  shows the exact schema `player_value_regression.py` expects (Player,
+  Team, Season, Age, DARKO_DPM, BPM, VORP -- one row per player-season) so
+  a real multi-year file can be dropped in without guessing the format.
+- **`multi_year_advanced_stats.csv`** -- the REAL multi-year file, 1,501
+  player-season rows / 713 players, 2023-24 through 2025-26 (Season labeled
+  by ending year: 2024/2025/2026). Built by `build_multi_year_stats.py`
+  from a user-supplied `Advanced Stats.xlsx` (DARKO DPM leaderboards +
+  Basketball-Reference PER/BPM/VORP/Age tables for those 3 seasons) --
+  that script isn't part of the runtime pipeline, it's a one-time
+  converter; re-run it if a newer `Advanced Stats.xlsx` is supplied. Also
+  carries a PER column the regression doesn't use yet (see
+  `player_value_regression.py`'s note on this). This is what
+  `run_real_league.MULTI_YEAR_STATS_CSV` points at.
 - **`conferences.py`** -- static East/West assignment for all 30 teams.
 - **`draft_picks_data.py`** -- every team's pick ownership, 2027-2033, as
   raw text transcribed from LD Sport (credited to ESPN) -- e.g. `"MIL/NO
@@ -102,7 +137,9 @@ they aren't wired into the automatic league-wide run.
   `roster_cap.Contract`/`CapSheet` objects for all 30 teams at import time.
   Its docstring has the full history of why this superseded four earlier
   scraping attempts (nbacaptracker.com, Spotrac, LD Sport, HoopsHype), all
-  of which had confirmed data-quality or access problems.
+  of which had confirmed data-quality or access problems. Now actually
+  consumed at runtime, by `roster_continuity.py` (see below) -- it used to
+  be a standalone data layer nothing else imported.
 - **`team_codes.py`** -- maps the 2-3 letter team codes used in
   `draft_picks_data.py`'s pick text (e.g. `"NO"`, `"GS"`) to the full team
   names used everywhere else in the pipeline.
@@ -153,12 +190,84 @@ they aren't wired into the automatic league-wide run.
   rating, fits a linear regression against `market_ratings.py`'s Elo (r^2
   reported by its `__main__` -- check it before trusting anything
   downstream), then re-derives that net rating per future year by
-  multiplying each player's contribution by their career-longevity
-  probability at that year (a retiring player's minutes are treated as
-  replacement-level, not redistributed to teammates). Capped at 5 years out
-  because the model can only ever go flat-or-down, never up (no incoming
-  rookies/trades/free agents are modeled) -- see its docstring for the full
-  reasoning.
+  multiplying each player's contribution by TWO independent 0-1 signals:
+  their career-longevity probability at that year (still an NBA player
+  ANYWHERE) and, new this round, their `roster_continuity.py` weight
+  (still under contract to WHEREVER they're currently rostered
+  specifically). Both a retiring player's and a departed-via-continuity
+  player's minutes are treated as replacement-level, not redistributed to
+  teammates. Capped at 5 years out because the model can never GAIN
+  talent (no incoming rookies/trades/free agents modeled) -- though it's
+  worth knowing that doesn't mean a clean flat-or-down trajectory: because
+  below-average/fringe players' presence and continuity tend to decay
+  FASTER than stars', a team's rating can actually RISE in the near term
+  as its weakest contributors drop out first (Denver: 1.05 -> 1.44 -> 1.46
+  -> 1.27 at offsets 0/1/3/5, confirmed directly), before eventually
+  declining as the stars' own presence fades. See its docstring for the
+  full reasoning on both the model and that correction. Each player's DPM
+  input comes from `player_value_regression.load_darko_players_with_projection()`
+  (see below), LIVE since the previous round.
+- **`player_value_regression.py`** -- LIVE: projects a player's NEXT-SEASON
+  DARKO DPM from multiple years of DARKO/BPM/VORP plus age, instead of
+  treating last season's single DPM snapshot as-is. Fits an interpretable
+  4-feature OLS regression (age, age^2, a z-scored recent-form composite,
+  and a year-over-year trend slope) via `numpy.linalg.lstsq`. Fit against
+  the real `data/multi_year_advanced_stats.csv` (318 training rows, well
+  past the 15-row overfitting floor its own `fit_regression()` checks
+  for): r^2~=0.64, comparable to `darko_ratings.py`'s own DPM-to-Elo fit.
+  Using these regression-projected values (instead of raw current-season
+  DPM) as `darko_ratings.py`'s input actually IMPROVES its fit against
+  market Elo, from r^2~=0.66 to r^2~=0.72 -- a real signal the multi-year
+  trend/age features are adding information, not just noise. 404 of 530
+  current players have the required 3 seasons on file and get a
+  regression-projected value; the other 126 (mostly rookies/short-history
+  players) fall back to `darko_ratings.py`'s original single-year behavior
+  automatically, so this was a strict upgrade, never a data loss. The
+  module still also still supports its original small labeled-synthetic
+  fixture in `__main__` for mechanics validation, and still falls back to
+  fully-`None`/no-op behavior if `run_real_league.MULTI_YEAR_STATS_CSV` is
+  ever unset again.
+- **`roster_continuity.py`** -- NEW, LIVE: the "still under contract to
+  THIS team" signal `darko_ratings.py` was missing (longevity alone only
+  knows "still an NBA player somewhere"; a player can stay in the league
+  while leaving via free agency/trade, and the old model had no way to
+  catch that). Sourced from `PlayerSalariesCSV.csv`'s real contract years
+  and player/team/mutual option flags (via `cap_sheet_data.py`/
+  `roster_cap.py`). Returns 1.0 (neutral, no penalty) when there's no
+  contract on file or the season falls past the cap sheet's 2030-31
+  coverage window, `OPTION_YEAR_CONTINUITY=0.7` for an option year, and
+  `NOT_ON_BOOKS_CONTINUITY=0.3` when the player's tracked contract simply
+  doesn't reach that season -- both flagged, undocumented-elsewhere
+  ASSUMPTIONS, not fits (no data source here says how often options get
+  exercised or expiring vets get retained). Matches players to contracts
+  by NAME ONLY, deliberately ignoring the Team column -- see the next
+  bullet for why. 383 of DARKO's 530 players (72%) have a name-matched
+  contract; the other 147 (mostly deep-bench/two-way) get the neutral
+  default, spot-checked to confirm they're genuinely absent from the cap
+  sheet, not a matching miss.
+  **IMPORTANT DISCOVERY while building this:** `darkodpmleaderboard.csv`'s
+  Team column disagrees with `PlayerSalariesCSV.csv`'s / `real_rosters_202627.py`'s
+  for a meaningful number of players, including several stars -- Giannis
+  Antetokounmpo is Miami Heat in the cap sheet/depth chart vs. Milwaukee
+  Bucks in DARKO, LeBron James is Philadelphia 76ers vs. Los Angeles
+  Lakers, Kawhi Leonard is Toronto Raptors vs. Los Angeles Clippers (73
+  such mismatches found on a direct join). `real_rosters_202627.py` --
+  `cap_sheet_data.py`'s OWN cross-check ground truth -- agrees with the
+  cap sheet, not DARKO, on every case checked, so this looks like the cap
+  sheet + depth chart describe a different (already-traded) roster
+  reality than the DARKO snapshot. Per explicit user direction, the cap
+  sheet/depth chart are treated as the correct team assignments -- but
+  `darko_ratings.py`'s own team GROUPING (which team a player's DPM counts
+  toward, driving every rating/standings/pick-grade number in this whole
+  pipeline) is still keyed on DARKO's team field and was NOT re-pointed at
+  the cap sheet's -- that's a bigger, separate change (see "Known gaps").
+- **`name_matching.py`** -- shared `normalize_name()` (strips diacritics,
+  periods, apostrophes, and Jr./Sr./II/III/IV suffixes) used by both
+  `build_multi_year_stats.py` and `roster_continuity.py` to join player
+  names across sources that don't spell them identically. Not a fuzzy
+  matcher -- true nickname mismatches (Bones Hyland / Nah'Shon Hyland)
+  still need a small hand-verified alias table local to whichever module
+  is doing that specific join.
 
 ### Ownership resolution layer
 
@@ -252,12 +361,41 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
   2028-2032 drafts use `darko_ratings.py`'s DARKO+longevity-evolved ratings
   instead of a frozen snapshot -- but it's a bounded, honestly-caveated
   model, not a real forecast:
-  - It can only ever move a team's rating flat or DOWN over time. Retiring
-    players' minutes are modeled as going to a replacement-level (0 DPM)
-    stand-in, never a rookie who develops, a trade addition, or a free
-    agent -- there's no "new talent enters the league" term. This is why
-    the window stops at 5 years out (2032) rather than the full 15 years
-    the longevity data covers.
+  - It can never GAIN talent over time -- departing players' minutes (from
+    retiring, per longevity, or from leaving that specific team, per the
+    new `roster_continuity.py`) are modeled as going to a replacement-level
+    (0 DPM) stand-in, never a rookie who develops, a trade addition, or a
+    free agent -- there's no "new talent enters the league" term. This is
+    why the window stops at 5 years out (2032) rather than the full 15
+    years the longevity data covers. That does NOT mean a clean flat-or-
+    down trajectory, though: below-average/fringe players' presence and
+    continuity tend to decay FASTER than stars' (less certain to stick
+    around at all, less certain to stay on THIS team specifically), so a
+    team's rating can actually RISE in the near term as its weakest
+    contributors drop out first, before eventually declining as the stars'
+    own presence fades -- confirmed directly (Denver: 1.05 -> 1.44 -> 1.46
+    -> 1.27 at offsets 0/1/3/5). An earlier version of this doc claimed a
+    guaranteed flat-or-down shape; that was wrong and has been corrected
+    here and in `darko_ratings.py`'s own docstring.
+  - **NEW this round -- roster continuity, and a real data-integrity
+    finding that came with it.** `roster_continuity.py` adds a "still
+    under contract to THIS team" signal from `PlayerSalariesCSV.csv`'s
+    real contract years/options (separate from longevity's "still an NBA
+    player somewhere" signal) -- see its bullet above for the mechanics
+    and the two flagged, unfit discount constants it uses. Building it
+    surfaced a real inconsistency: `darkodpmleaderboard.csv`'s Team column
+    disagrees with `PlayerSalariesCSV.csv`'s / `real_rosters_202627.py`'s
+    for 73+ players, including stars (Giannis, LeBron, Kawhi among them).
+    Per explicit user direction the cap sheet/depth chart are treated as
+    correct, and the continuity lookup matches players by name only to
+    route around the disagreement -- but `darko_ratings.py`'s own TEAM
+    GROUPING (which team a player's production counts toward, for every
+    rating/standings/pick-grade number in this pipeline) still uses
+    DARKO's team field, unchanged. Re-keying that onto the cap sheet's
+    team assignments -- and checking whether `darkolongevityprojections.csv`
+    and `market_ratings.py`'s win-total data assume the DARKO-side roster
+    or the cap-sheet-side one -- is real follow-up work this round didn't
+    cover.
   - The DARKO-to-market fit is real but moderate (r^2 ~ 0.66 at last check,
     reported by `darko_ratings.py`'s `__main__` -- always re-check it if the
     input CSVs change). The single biggest miss is deep, balanced rosters
@@ -268,10 +406,15 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
     conspicuous jump between that team's 2027 pick grade (real market data)
     and its 2028+ grades (the lower DARKO-implied number). Worth a manual
     sanity check for any team whose grades jump sharply at that boundary.
-  - Players who stay on the roster are scored at their CURRENT DPM for
-    every future year -- no aging curve on skill itself, only on presence
-    (the longevity data is a "still playing" probability, not a future
-    skill projection).
+  - Players who stay on the roster are scored at one FIXED skill value for
+    every future year, only presence (the longevity decay) varies by year.
+    That fixed value is now `player_value_regression.py`'s regression-
+    projected next-season DPM where available (404/530 players -- an
+    age/trend-aware one-step-ahead projection, not the raw prior-season
+    snapshot), but it's still only projected ONE season forward and then
+    held flat through 2028-2032 -- there's no re-projection that ages a
+    player further for each additional year out, so a player already in
+    decline is under-penalized by 2032 relative to 2028.
   - 2027 and 2033 aren't touched by this model: 2027 uses
     `market_ratings.py`'s real 2026-27 market ratings directly (the best
     signal available for the season that's actually about to happen), and

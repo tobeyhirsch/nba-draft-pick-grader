@@ -54,9 +54,10 @@ from pick_restrictions_321 import DEFAULT_2027_HISTORY
 from standings_sim import Team, expected_wins
 from data_paths import find_data_file
 from darko_ratings import (
-    load_darko_players, all_teams_net_ratings, fit_darko_to_elo,
+    all_teams_net_ratings, fit_darko_to_elo,
     future_year_teams, MAX_OFFSET, FIRST_DRAFT_YEAR_COVERED,
 )
+from player_value_regression import load_darko_players_with_projection
 
 # Checks several common data/ locations relative to THIS file (see
 # data_paths.py) rather than assuming one fixed layout -- works whether
@@ -69,6 +70,16 @@ STANDINGS_TRIALS = 2000  # trials per year for the projected-standings report (b
 RESULTS_FILE = "league_pick_grades.md"
 STANDINGS_FILE = "projected_standings.md"
 FINAL_DRAFT_YEAR = FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET  # 2033 -- outside darko_ratings.py's window, falls back to base
+
+# Real multi-year advanced-stats CSV (schema documented in
+# player_value_regression.py; built by build_multi_year_stats.py from the
+# user-supplied "Advanced Stats.xlsx" -- DARKO DPM + Basketball-Reference
+# PER/BPM/VORP/Age for 2023-24 through 2025-26) -- upgrades every eligible
+# player's DPM input from a single-season snapshot to a regression-
+# projected next-season value. Set back to None to fall back to
+# darko_ratings.py's original single-year behavior, unchanged (see
+# player_value_regression.py's STATUS note).
+MULTI_YEAR_STATS_CSV = find_data_file("multi_year_advanced_stats.csv", os.path.dirname(os.path.abspath(__file__)))
 
 
 def build_real_league() -> List[Team]:
@@ -88,9 +99,15 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
     is calibrated AGAINST those same ratings, so re-deriving 2027 from it
     would only add noise). See darko_ratings.py's module docstring for the
     method and its caveats (this model can only ever go flat-or-down per
-    team, never up, which is why the window stops at 2032).
+    team, never up, which is why the window stops at 2032). Each player's
+    DPM input comes from load_darko_players_with_projection() -- a
+    regression-projected next-season value when MULTI_YEAR_STATS_CSV is
+    set and that player has enough historical seasons, otherwise the same
+    raw current-season DPM darko_ratings.load_darko_players() always used
+    (see player_value_regression.py; MULTI_YEAR_STATS_CSV is None by
+    default, so this is a no-op today).
     """
-    players = load_darko_players()
+    players = load_darko_players_with_projection(MULTI_YEAR_STATS_CSV)
     darko_now = all_teams_net_ratings(players, offset=0)
     market_elo = {t.name: t.rating for t in base_teams}
     slope, intercept, r2 = fit_darko_to_elo(darko_now, market_elo)

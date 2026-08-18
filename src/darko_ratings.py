@@ -37,40 +37,81 @@ CHAIN:
 
 3. For a FUTURE season (offset = 1..5 years out -- the 2028 through 2032
    drafts; see WINDOW below for why it stops at 5), recompute the same
-   weighted DPM sum but multiply every player's term by their longevity
-   probability at that offset. The denominator stays fixed at the team's
-   CURRENT total MPG (not the shrinking survivor total) -- a retiring
-   player's vacated minutes are modeled as going to a REPLACEMENT-LEVEL
-   (0 DPM, i.e. league-average) player, not silently redistributed onto
-   the teammates who remain (which would flatter a team for losing
-   players). This is a named assumption, not a fit: nothing in the
-   supplied data says who actually replaces a retiring player's minutes
-   (a rookie, a trade target, in-house development), so replacement level
-   is the least presumptuous stand-in.
+   weighted DPM sum but multiply every player's term by TWO independent
+   0.0-1.0 signals: their longevity probability at that offset (still an
+   NBA player ANYWHERE -- darkolongevityprojections.csv), and their
+   roster-continuity weight at that offset (still under contract to
+   WHEREVER they're currently rostered specifically -- see
+   roster_continuity.py, sourced from PlayerSalariesCSV.csv's actual
+   contract years/options). These catch different failure modes: a player
+   can retire (longevity catches that) or stay in the league but leave via
+   free agency/trade (continuity catches that; longevity alone would keep
+   scoring their production toward a team they're no longer on). The
+   denominator stays fixed at the team's CURRENT total MPG (not the
+   shrinking survivor total) -- both a retiring player's AND a departed-
+   via-continuity player's vacated minutes are modeled as going to a
+   REPLACEMENT-LEVEL (0 DPM, i.e. league-average) player, not silently
+   redistributed onto the teammates who remain (which would flatter a team
+   for losing players). This is a named assumption, not a fit: nothing in
+   the supplied data says who actually replaces those minutes (a rookie, a
+   trade target, in-house development), so replacement level is the least
+   presumptuous stand-in.
 
 4. Run that future net rating back through the SAME slope/intercept from
    step 2 to get a future Elo rating, ready for standings_sim.Team /
    draft_pipeline_321's simulator.
 
 WHY THE WINDOW STOPS AT +5 (2028-2032 drafts), NOT +15:
-This model can only ever go flat or DOWN over time, never up -- every
-retiring player's minutes get replaced with a 0-DPM stand-in, never a
-rookie who develops into someone better, a trade addition, or a free-agent
-signing. That's a fine approximation for a few years (most rosters don't
-turn over that fast) but compounds into an obviously wrong "every team
-converges toward replacement level" shape by year 10+. Capped here at
-MAX_OFFSET=5 for that reason; the raw longevity file goes out to +15 if a
-future revision of this module wants to extend the window (it would need a
-counterbalancing "new talent enters the league" term first, which no
-supplied data source currently covers).
+This model can never GAIN talent over time -- every departing player
+(retiring per longevity, or leaving that specific team per continuity)
+gets replaced with a 0-DPM stand-in, never a rookie who develops into
+someone better, a trade addition, or a free-agent signing. That does NOT
+mean a team's rating is guaranteed to trend flat-or-down year over year,
+though -- it isn't, and it's worth being precise about that rather than
+overclaiming a clean shape. Below-average/fringe players' presence and
+continuity typically decay FASTER than stars' (an end-of-bench player is
+both less certain to still be in the league and less certain to still be
+on this specific team a year or two out than a franchise player is), so a
+team can see its rating RISE in the near term as its weakest contributors'
+expected minutes shrink fastest and pull a below-replacement drag out of
+the average -- before eventually declining as the stars' own presence
+starts to fade too. (Checked directly: Denver's presence-only rating goes
+1.05 -> 1.44 -> 1.46 -> 1.27 at offsets 0/1/3/5 -- a real rise-then-fall,
+not monotonic decline.) What IS true, and is the actual reason for the
++5 cap: this model has no counterbalancing "new talent enters the league"
+term at all, so over a long enough horizon a team's rating is driven
+entirely by who's LEFT, converging toward an obviously-wrong "every team
+->replacement level" shape by year 10+. Capped here at MAX_OFFSET=5 for
+that reason; the raw longevity file goes out to +15 if a future revision
+of this module wants to extend the window (it would need that
+counterbalancing term first, which no supplied data source currently
+covers).
 
 WHAT ELSE THIS DOES NOT MODEL:
   - Skill trajectories for players who DON'T leave. A player projected to
     still be active at offset +5 is scored at their CURRENT DPM, not an
     age-adjusted one -- the longevity file gives presence, not future
-    skill level, and no aging-curve data was supplied.
+    skill level, and no aging-curve data was supplied. (player_value_regression.py
+    DOES age-adjust the DPM INPUT to this module for players with enough
+    multi-year history -- see that module -- but that's a one-time
+    next-season projection, held flat afterward; it isn't a per-future-year
+    aging curve either.)
   - Trades, free agency, or draft picks converting into new rostered
-    players. This is today's roster projected forward with attrition only.
+    players. This is today's roster (whichever team DARKO currently has
+    them on -- see roster_continuity.py's TEAM-MISMATCH DISCOVERY for a
+    caveat on that) projected forward with attrition only. A player who
+    leaves via contract non-continuity vacates minutes the same
+    replacement-level way a retiring player does (see step 3) -- there's
+    no "and then they sign somewhere else, boosting THAT team" term.
+
+See roster_continuity.py's module docstring for a significant caveat
+discovered while wiring in step 3's continuity signal: darkodpmleaderboard.csv's
+Team field (which this module's team GROUPING is entirely keyed on) was
+found to disagree with PlayerSalariesCSV.csv's / real_rosters_202627.py's
+for a meaningful number of players, including several stars -- per user
+direction those other two sources are the trusted ones, which this module's
+own team assignments do NOT yet reflect. Read that docstring before
+trusting any single team's rating too precisely.
 """
 
 import csv
@@ -82,12 +123,24 @@ import numpy as np
 
 from standings_sim import Team
 from data_paths import find_data_file
+from roster_continuity import continuity as contract_continuity
 
 DPM_CSV = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
 LONGEVITY_CSV = find_data_file("darkolongevityprojections.csv", os.path.dirname(os.path.abspath(__file__)))
 
 MAX_OFFSET = 5  # see "WHY THE WINDOW STOPS AT +5" above
 FIRST_DRAFT_YEAR_COVERED = 2028  # offset 1; the 2027 draft uses market_ratings.py's teams directly, no offset 0 here
+
+
+def season_start_year_for_offset(offset: int) -> int:
+    """
+    offset k (1..MAX_OFFSET, feeding draft year FIRST_DRAFT_YEAR_COVERED+k-1)
+    -> the season-start year that draft's lottery season runs on, in
+    roster_cap.Contract's convention (season_start_year=2027 means the
+    "2027-28" season). E.g. offset=1 feeds the 2028 draft, which is
+    decided by the 2027-28 season -> season_start_year=2027.
+    """
+    return FIRST_DRAFT_YEAR_COVERED + offset - 2
 
 
 @dataclass
@@ -151,11 +204,24 @@ def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0) -> flo
     roster, no decay). Denominator is fixed at the team's CURRENT total
     MPG regardless of offset -- see module docstring step 3 for why
     (departed minutes count as replacement level, not redistributed).
+    For offset >= 1, each player's term is also scaled by their
+    roster_continuity.continuity() at that season -- see module docstring
+    step 3 and roster_continuity.py for what that catches that longevity
+    presence alone doesn't (leaving via free agency/trade while still
+    active in the league). Not applied at offset=0: the current roster is
+    the current roster by definition, nothing to weight.
     """
     baseline_total_mpg = sum(p.mpg for p in team_players)
     if baseline_total_mpg <= 0:
         raise ValueError("Team has zero total MPG in the DARKO leaderboard -- can't rate it")
-    weighted = sum(p.dpm * p.mpg * p.presence(offset) for p in team_players)
+    if offset <= 0:
+        weighted = sum(p.dpm * p.mpg * p.presence(offset) for p in team_players)
+    else:
+        season_start_year = season_start_year_for_offset(offset)
+        weighted = sum(
+            p.dpm * p.mpg * p.presence(offset) * contract_continuity(p.name, season_start_year)
+            for p in team_players
+        )
     return weighted / baseline_total_mpg
 
 
@@ -245,3 +311,28 @@ if __name__ == "__main__":
     print(f"{'Team':<28}{'Elo now':>10}{f'Elo +{MAX_OFFSET}y':>10}{'Drift':>10}")
     for team, now_elo, future_elo, drift in drift_rows:
         print(f"{team:<28}{now_elo:>10.1f}{future_elo:>10.1f}{drift:>+10.1f}")
+
+    # NOTE: offset=MAX_OFFSET (2032 draft, season_start_year 2031) falls
+    # OUTSIDE PlayerSalariesCSV.csv's coverage (through season_start_year
+    # 2030 -- see roster_continuity.MAX_CAP_SHEET_SEASON), so continuity is
+    # a neutral no-op there by construction. Compare at offset=2 (2029
+    # draft, season_start_year 2028) instead, which the cap sheet covers.
+    continuity_check_offset = 2
+    print(f"\n--- roster_continuity.py's marginal effect at +{continuity_check_offset}y "
+          f"(longevity-only vs. longevity+continuity, same slope/intercept) ---")
+
+    def _team_net_rating_presence_only(team_players, offset):
+        baseline = sum(p.mpg for p in team_players)
+        return sum(p.dpm * p.mpg * p.presence(offset) for p in team_players) / baseline
+
+    by_team = _group_by_team(players)
+    darko_check_with_continuity = all_teams_net_ratings(players, offset=continuity_check_offset)
+    comparison_rows = []
+    for team, team_players in by_team.items():
+        presence_only = darko_elo(_team_net_rating_presence_only(team_players, continuity_check_offset), slope, intercept)
+        with_continuity = darko_elo(darko_check_with_continuity[team], slope, intercept)
+        comparison_rows.append((team, presence_only, with_continuity, with_continuity - presence_only))
+    comparison_rows.sort(key=lambda r: r[3])
+    print(f"{'Team':<28}{'Longevity-only':>16}{'+ continuity':>14}{'Delta':>10}")
+    for team, po, wc, delta in comparison_rows:
+        print(f"{team:<28}{po:>16.1f}{wc:>14.1f}{delta:>+10.1f}")

@@ -45,7 +45,7 @@ def find_data_file(filename: str, start_dir: str) -> str:
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
     for fname in ["market_win_totals.xlsx", "PlayerSalariesCSV.csv", "NBA_Draft_Picks_20152025.xlsx",
-                  "darkodpmleaderboard.csv", "darkolongevityprojections.csv"]:
+                  "darkodpmleaderboard.csv", "darkolongevityprojections.csv", "multi_year_advanced_stats.csv"]:
         try:
             found = find_data_file(fname, here)
             print(f"FOUND {fname} -> {found}")
