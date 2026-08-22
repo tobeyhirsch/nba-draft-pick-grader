@@ -20,42 +20,53 @@ those grades -- see "Projected standings" below).
 ## Pipeline, in order
 
 ```
-market_win_totals.xlsx                    PlayerSalariesCSV.csv
-        |                                          |
-        v                                          v
-market_ratings.py                          cap_sheet_data.py
-(sportsbook lines -> Elo ratings,          (5-year contracts, all 30 teams)
- 2027 draft only)                                  |
-        |                                          v
-        |                                  roster_continuity.py  (NEW --
-        |                                  "still under contract to THIS
-        |                                  team" signal, from real
-        |                                  contract years/options; name-
-        |                                  matched to DARKO players --
-        |                                  see its docstring for a Team-
-        |                                  column mismatch it surfaced)
-        |                                          |
-        +-------------------+                      |
-        |                   v                      |
+market_win_totals.xlsx      PlayerSalariesCSV.csv      real_rosters_202627.py
+        |                            |                          |
+        v                            v                          |
+market_ratings.py            cap_sheet_data.py                  |
+(sportsbook lines             (5-year contracts,                |
+ -> Elo ratings,               all 30 teams)                    |
+ 2027 draft only)                    |                          |
+        |                            +------------+--------------+
+        |                            |            v
+        |                            |    trusted_rosters.py  (NEW -- the
+        |                            |    REAL current team per player,
+        |                            |    per user direction that this +
+        |                            |    the cap sheet are correct and
+        |                            |    darkodpmleaderboard.csv's Team
+        |                            |    column is NOT -- 90/530 players
+        |                            |    re-keyed, incl. Giannis/LeBron/
+        |                            |    Kawhi; see its docstring)
+        |                            v            |
+        |                    roster_continuity.py |  ("still under
+        |                    (NEW -- "still under  |  contract to THIS
+        |                    contract" signal,     |  team" re-keying
+        |                    name-matched, ignores |  applied INSIDE
+        |                    Team entirely -- see  |  load_darko_players()
+        |                    its docstring)        |  below, before any
+        |                            |             |  rating is computed)
+        +-------------------+        |             |
+        |                   v        v             v
         |         darkodpmleaderboard.csv + darkolongevityprojections.csv
-        |                   |                      |
-        |                   v                      |
-        |         multi_year_advanced_stats.csv (built by                |
-        |         build_multi_year_stats.py from the user-supplied       |
-        |         Advanced Stats.xlsx: DARKO/BPM/VORP/PER/age, 2023-24   |
-        |         through 2025-26)                                      |
-        |                   |                                           |
-        |                   v                                           |
-        |         player_value_regression.py  (LIVE -- multi-year       |
-        |         DARKO/BPM/VORP+age regression, r^2~=0.64, upgrades    |
-        |         404/530 players with 3 seasons on file to a           |
-        |         regression-projected next-season DPM; the rest keep   |
-        |         their raw current-season DPM)                        |
-        |                   |                                           |
-        |                   v                                           |
-        |         darko_ratings.py  (DPM+longevity+continuity,          |
-        |         calibrated against market_ratings.py's Elo -> <-------+
-        |         evolved ratings for the 2028-2032 drafts)
+        |                   |
+        |                   v
+        |         multi_year_advanced_stats.csv (built by
+        |         build_multi_year_stats.py from the user-supplied
+        |         Advanced Stats.xlsx: DARKO/BPM/VORP/PER/age, 2023-24
+        |         through 2025-26)
+        |                   |
+        |                   v
+        |         player_value_regression.py  (LIVE -- multi-year
+        |         DARKO/BPM/VORP+age regression, r^2~=0.64, upgrades
+        |         404/530 players with 3 seasons on file to a
+        |         regression-projected next-season DPM; the rest keep
+        |         their raw current-season DPM)
+        |                   |
+        |                   v
+        |         darko_ratings.py  (DPM+longevity+continuity, TEAMS
+        |         RE-KEYED onto trusted_rosters.py, calibrated against
+        |         market_ratings.py's Elo -> evolved ratings for the
+        |         2028-2032 drafts)
         |                   |
         v                   v
 conferences.py  ---->  standings_sim.py  <----  draft_picks_data.py
@@ -144,11 +155,12 @@ they aren't wired into the automatic league-wide run.
   `draft_picks_data.py`'s pick text (e.g. `"NO"`, `"GS"`) to the full team
   names used everywhere else in the pipeline.
 - **`real_rosters_202627.py`** -- user-supplied real depth charts for all 30
-  teams, kept as a reference/ground-truth dataset. Not imported by any
-  runtime module (`cap_sheet_data.py` parses the CSV directly) -- it exists
-  because it's what the CSV's player-team attributions were cross-checked
-  against before trusting them. Useful if you get new roster/salary data
-  and want to re-validate it the same way.
+  teams (526 players, `{team: {position: [names]}}`, names carry inline
+  annotations like "(R)"/"**"/"(RFA)" the transcription kept on purpose --
+  see its docstring). Originally just a reference dataset `cap_sheet_data.py`
+  was cross-checked against; now ALSO consumed at runtime, by
+  `trusted_rosters.py` (see below) -- it's the primary source for which
+  team a player is actually on.
 
 ### Simulation layer
 
@@ -206,7 +218,9 @@ they aren't wired into the automatic league-wide run.
   declining as the stars' own presence fades. See its docstring for the
   full reasoning on both the model and that correction. Each player's DPM
   input comes from `player_value_regression.load_darko_players_with_projection()`
-  (see below), LIVE since the previous round.
+  (see below), LIVE since the previous round; each player's TEAM is now
+  re-keyed onto `trusted_rosters.py`'s real current-roster data (see
+  below) rather than DARKO's own (partly stale) Team column.
 - **`player_value_regression.py`** -- LIVE: projects a player's NEXT-SEASON
   DARKO DPM from multiple years of DARKO/BPM/VORP plus age, instead of
   treating last season's single DPM snapshot as-is. Fits an interpretable
@@ -245,29 +259,44 @@ they aren't wired into the automatic league-wide run.
   contract; the other 147 (mostly deep-bench/two-way) get the neutral
   default, spot-checked to confirm they're genuinely absent from the cap
   sheet, not a matching miss.
-  **IMPORTANT DISCOVERY while building this:** `darkodpmleaderboard.csv`'s
-  Team column disagrees with `PlayerSalariesCSV.csv`'s / `real_rosters_202627.py`'s
-  for a meaningful number of players, including several stars -- Giannis
-  Antetokounmpo is Miami Heat in the cap sheet/depth chart vs. Milwaukee
-  Bucks in DARKO, LeBron James is Philadelphia 76ers vs. Los Angeles
-  Lakers, Kawhi Leonard is Toronto Raptors vs. Los Angeles Clippers (73
-  such mismatches found on a direct join). `real_rosters_202627.py` --
-  `cap_sheet_data.py`'s OWN cross-check ground truth -- agrees with the
-  cap sheet, not DARKO, on every case checked, so this looks like the cap
-  sheet + depth chart describe a different (already-traded) roster
-  reality than the DARKO snapshot. Per explicit user direction, the cap
-  sheet/depth chart are treated as the correct team assignments -- but
-  `darko_ratings.py`'s own team GROUPING (which team a player's DPM counts
-  toward, driving every rating/standings/pick-grade number in this whole
-  pipeline) is still keyed on DARKO's team field and was NOT re-pointed at
-  the cap sheet's -- that's a bigger, separate change (see "Known gaps").
+  **DISCOVERY while building this, now FIXED (see `trusted_rosters.py`
+  below):** `darkodpmleaderboard.csv`'s Team column disagreed with
+  `PlayerSalariesCSV.csv`'s / `real_rosters_202627.py`'s for a meaningful
+  number of players, including several stars -- Giannis Antetokounmpo was
+  Miami Heat in the cap sheet/depth chart vs. Milwaukee Bucks in DARKO,
+  LeBron James was Philadelphia 76ers vs. Los Angeles Lakers, Kawhi
+  Leonard was Toronto Raptors vs. Los Angeles Clippers (90 such mismatches
+  found on a direct join). `real_rosters_202627.py` -- `cap_sheet_data.py`'s
+  OWN cross-check ground truth -- agreed with the cap sheet, not DARKO, on
+  every case checked, so this looked like the cap sheet + depth chart
+  describing a different (already-traded) roster reality than the DARKO
+  snapshot. Per explicit user direction, the cap sheet/depth chart ARE the
+  correct team assignments, real trades DARKO's snapshot hadn't caught up
+  to -- see `trusted_rosters.py` for the fix.
+- **`trusted_rosters.py`** -- NEW, LIVE: re-keys every DARKO player's team
+  onto their REAL current team, per the discovery above. Source priority:
+  `real_rosters_202627.TEAM_DEPTH_CHARTS` first (526 players, stripping
+  its inline annotations), then `PlayerSalariesCSV.csv`'s Team column for
+  the handful the depth chart doesn't cover but the cap sheet does (5 at
+  last check). `darko_ratings.load_darko_players()` calls this for every
+  player and re-keys `DarkoPlayer.team` wherever it's covered (443/530
+  players, 90 of those actually changing team), falling back to DARKO's
+  own Team column for the 87 neither trusted source covers. This isn't
+  just a future-years fix -- it changes the CURRENT-season (2027 draft)
+  DARKO-to-market-Elo fit too, since that's grouped by the same
+  `DarkoPlayer.team`. Result: r^2 went from 0.721 (mislabeled teams) to
+  0.731 (corrected) on its own, and to 0.737 combined with
+  `player_value_regression.py`'s multi-year upgrade -- both real DIRECTION
+  improvements (fixing the mislabeling made the model fit the real market
+  better, which is exactly what you'd hope a correction does), though
+  modest in size.
 - **`name_matching.py`** -- shared `normalize_name()` (strips diacritics,
-  periods, apostrophes, and Jr./Sr./II/III/IV suffixes) used by both
-  `build_multi_year_stats.py` and `roster_continuity.py` to join player
-  names across sources that don't spell them identically. Not a fuzzy
-  matcher -- true nickname mismatches (Bones Hyland / Nah'Shon Hyland)
-  still need a small hand-verified alias table local to whichever module
-  is doing that specific join.
+  periods, apostrophes, and Jr./Sr./II/III/IV suffixes) used by
+  `build_multi_year_stats.py`, `roster_continuity.py`, and
+  `trusted_rosters.py` to join player names across sources that don't
+  spell them identically. Not a fuzzy matcher -- true nickname mismatches
+  (Bones Hyland / Nah'Shon Hyland) still need a small hand-verified alias
+  table local to whichever module is doing that specific join.
 
 ### Ownership resolution layer
 
@@ -377,25 +406,31 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
     -> 1.27 at offsets 0/1/3/5). An earlier version of this doc claimed a
     guaranteed flat-or-down shape; that was wrong and has been corrected
     here and in `darko_ratings.py`'s own docstring.
-  - **NEW this round -- roster continuity, and a real data-integrity
-    finding that came with it.** `roster_continuity.py` adds a "still
-    under contract to THIS team" signal from `PlayerSalariesCSV.csv`'s
-    real contract years/options (separate from longevity's "still an NBA
-    player somewhere" signal) -- see its bullet above for the mechanics
-    and the two flagged, unfit discount constants it uses. Building it
-    surfaced a real inconsistency: `darkodpmleaderboard.csv`'s Team column
-    disagrees with `PlayerSalariesCSV.csv`'s / `real_rosters_202627.py`'s
-    for 73+ players, including stars (Giannis, LeBron, Kawhi among them).
-    Per explicit user direction the cap sheet/depth chart are treated as
-    correct, and the continuity lookup matches players by name only to
-    route around the disagreement -- but `darko_ratings.py`'s own TEAM
-    GROUPING (which team a player's production counts toward, for every
-    rating/standings/pick-grade number in this pipeline) still uses
-    DARKO's team field, unchanged. Re-keying that onto the cap sheet's
-    team assignments -- and checking whether `darkolongevityprojections.csv`
-    and `market_ratings.py`'s win-total data assume the DARKO-side roster
-    or the cap-sheet-side one -- is real follow-up work this round didn't
-    cover.
+  - **Roster continuity (`roster_continuity.py`) and a real data-integrity
+    finding that came with it, now fixed (`trusted_rosters.py`).**
+    `roster_continuity.py` adds a "still under contract to THIS team"
+    signal from `PlayerSalariesCSV.csv`'s real contract years/options
+    (separate from longevity's "still an NBA player somewhere" signal) --
+    see its bullet above for the mechanics and the two flagged, unfit
+    discount constants it uses. Building it surfaced a real inconsistency:
+    `darkodpmleaderboard.csv`'s Team column disagreed with
+    `PlayerSalariesCSV.csv`'s / `real_rosters_202627.py`'s for 90 players,
+    including stars (Giannis, LeBron, Kawhi among them) -- per explicit
+    user direction, the cap sheet/depth chart are correct (real trades
+    DARKO's snapshot hadn't caught up to). `trusted_rosters.py` now
+    re-keys `darko_ratings.load_darko_players()`'s team assignment onto
+    those trusted sources for every player they cover, so this is no
+    longer an open gap -- see its bullet above for the mechanics and the
+    (small, positive) effect on the DARKO-to-market fit. The two follow-up
+    questions this raised turned out to be non-issues on inspection:
+    `darkolongevityprojections.csv` is joined to the DPM file by DARKO's
+    OWN (Player, Team) key purely to pair the two files up -- the
+    resulting longevity number is a property of the PLAYER, not their
+    team label, so re-keying the team afterward doesn't disturb it; and
+    `market_ratings.py`'s win-total data is real-franchise-level (from
+    sportsbook lines), never keyed by any individual player's team at
+    all, so there was never a DARKO-side-vs-cap-sheet-side ambiguity there
+    to resolve.
   - The DARKO-to-market fit is real but moderate (r^2 ~ 0.66 at last check,
     reported by `darko_ratings.py`'s `__main__` -- always re-check it if the
     input CSVs change). The single biggest miss is deep, balanced rosters

@@ -10,7 +10,10 @@ unchanged here).
 
 DATA (both user-supplied, verified to share the exact same 530-player
 universe -- identical (Player, Team) keys in both files, no fuzzy name
-matching needed):
+matching needed for THIS join specifically; that Team half of the key is
+DARKO's own labeling, used only to join these two files to each other --
+see TEAM RE-KEYING below for why the resulting DarkoPlayer.team is NOT
+simply copied from it):
   darkodpmleaderboard.csv     -- DPM (ODPM+DDPM, a per-100-possession
                                   plus-minus rating) and MPG (season-long
                                   projected minutes/game) per active player.
@@ -104,14 +107,24 @@ WHAT ELSE THIS DOES NOT MODEL:
     replacement-level way a retiring player does (see step 3) -- there's
     no "and then they sign somewhere else, boosting THAT team" term.
 
-See roster_continuity.py's module docstring for a significant caveat
-discovered while wiring in step 3's continuity signal: darkodpmleaderboard.csv's
-Team field (which this module's team GROUPING is entirely keyed on) was
-found to disagree with PlayerSalariesCSV.csv's / real_rosters_202627.py's
-for a meaningful number of players, including several stars -- per user
-direction those other two sources are the trusted ones, which this module's
-own team assignments do NOT yet reflect. Read that docstring before
-trusting any single team's rating too precisely.
+TEAM RE-KEYING: darkodpmleaderboard.csv's own Team column was found (while
+building roster_continuity.py) to disagree with PlayerSalariesCSV.csv's /
+real_rosters_202627.py's for 90 of 530 players, including several stars --
+Giannis Antetokounmpo DARKO-labeled Milwaukee Bucks vs. actually Miami
+Heat, LeBron James DARKO-labeled Los Angeles Lakers vs. actually
+Philadelphia 76ers, Kawhi Leonard DARKO-labeled Los Angeles Clippers vs.
+actually Toronto Raptors, and 87 more (see trusted_rosters.py's __main__
+for the full list). Per explicit user direction, the depth chart/cap sheet
+are correct and DARKO's Team column is not, so load_darko_players() below
+re-keys every DarkoPlayer.team onto trusted_rosters.trusted_team_for()
+wherever that's covered (443/530 players), falling back to DARKO's own
+Team column only for the 87 it isn't (consistent with this project's
+"no data -> don't guess" policy elsewhere). This affects EVERY rating this
+module produces, not just the future-year ones -- the CURRENT-season
+(offset=0) net rating and its fit against market Elo (step 2) are grouped
+by the same DarkoPlayer.team, so a mislabeled star's production used to
+inflate the wrong team's current rating too. See trusted_rosters.py's
+module docstring for the full discovery and source-priority reasoning.
 """
 
 import csv
@@ -124,6 +137,7 @@ import numpy as np
 from standings_sim import Team
 from data_paths import find_data_file
 from roster_continuity import continuity as contract_continuity
+from trusted_rosters import trusted_team_for
 
 DPM_CSV = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
 LONGEVITY_CSV = find_data_file("darkolongevityprojections.csv", os.path.dirname(os.path.abspath(__file__)))
@@ -178,16 +192,30 @@ def load_darko_players(dpm_csv: str = DPM_CSV, longevity_csv: str = LONGEVITY_CS
         )
 
     players = []
+    reassigned = 0
     for key, drow in dpm_rows.items():
         lrow = lon_rows[key]
         longevity = {i: float(lrow[f"+{i}"]) for i in range(1, 16)}
+        # TEAM RE-KEYING -- see module docstring. dpm_csv/longevity_csv's OWN
+        # Team column (drow["Team"]) is only used above to join those two
+        # files to each other; the team a player's DPM actually counts
+        # toward comes from trusted_rosters.py wherever it's covered.
+        darko_team = drow["Team"]
+        real_team = trusted_team_for(drow["Player"])
+        team = real_team if real_team is not None else darko_team
+        if real_team is not None and real_team != darko_team:
+            reassigned += 1
         players.append(DarkoPlayer(
             name=drow["Player"],
-            team=drow["Team"],
+            team=team,
             dpm=_parse_dpm(drow["DPM"]),
             mpg=float(drow["MPG"]),
             longevity_by_offset=longevity,
         ))
+    if reassigned:
+        print(f"[darko_ratings] re-keyed {reassigned}/{len(players)} players' team onto "
+              f"real_rosters_202627.py/PlayerSalariesCSV.csv's trusted assignment "
+              f"(darkodpmleaderboard.csv's own Team column disagreed) -- see trusted_rosters.py")
     return players
 
 

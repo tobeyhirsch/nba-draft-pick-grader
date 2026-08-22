@@ -298,14 +298,15 @@ def load_darko_players_with_projection(multi_year_csv: Optional[str] = None,
     default) to get EXACTLY darko_ratings.load_darko_players()'s original
     behavior back, unchanged.
 
-    STATUS: as of this writing no real multi-year dataset has been
-    supplied for this project -- every player in darkodpmleaderboard.csv
-    has exactly one season on file anywhere, so calling this with a real
-    multi_year_csv today would fall back to raw current-season DPM for the
-    entire league (identical output to load_darko_players()). This
-    function is ready to use the moment a real multi-year file matching
-    the schema above is supplied -- see this file's __main__ for a
-    worked (synthetic) example of what changes once it is.
+    STATUS: LIVE. run_real_league.MULTI_YEAR_STATS_CSV points at the real
+    data/multi_year_advanced_stats.csv (1,501 player-season rows / 713
+    players); 404 of the 530 current DARKO players have enough history to
+    get a regression-projected value here, the other 126 fall back to raw
+    current-season DPM as documented above. See this module's top-of-file
+    STATUS note for the fit diagnostics (r^2, training-row count). This
+    file's __main__ still separately exercises the small labeled-synthetic
+    fixture too, to validate the mechanics in isolation from whatever the
+    real data happens to contain in a given run.
     """
     from darko_ratings import load_darko_players, DarkoPlayer, DPM_CSV as _DPM_CSV, LONGEVITY_CSV as _LONGEVITY_CSV
 
