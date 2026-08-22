@@ -6,49 +6,49 @@
 
 | Team | Avg 1st-rd grade | 1st-rd picks | Avg 2nd-rd grade | 2nd-rd picks | Unresolved |
 |---|---|---|---|---|---|
-| Chicago Bulls | 8.69 | 7 | 1.01 | 12 | 0 |
-| Washington Wizards | 8.57 | 7 | 1.28 | 11 | 1 |
-| Los Angeles Clippers | 8.44 | 5 | 1.02 | 4 | 2 |
-| Utah Jazz | 8.35 | 6 | 1.39 | 9 | 5 |
-| Memphis Grizzlies | 8.21 | 9 | 1.00 | 4 | 6 |
-| Golden State Warriors | 8.16 | 7 | 1.00 | 1 | 2 |
-| Indiana Pacers | 8.13 | 6 | 1.30 | 7 | 0 |
-| Charlotte Hornets | 8.13 | 9 | 1.24 | 14 | 3 |
-| Atlanta Hawks | 7.87 | 6 | 1.26 | 5 | 2 |
-| Portland Trail Blazers | 7.82 | 9 | 1.09 | 8 | 0 |
-| New Orleans Pelicans | 7.72 | 8 | 1.06 | 5 | 0 |
-| Milwaukee Bucks | 7.60 | 5 | 1.00 | 2 | 2 |
-| Orlando Magic | 7.45 | 4 | 1.05 | 6 | 2 |
-| Houston Rockets | 7.33 | 9 | 1.33 | 6 | 0 |
-| Sacramento Kings | 7.28 | 9 | 1.00 | 2 | 2 |
-| Brooklyn Nets | 7.22 | 11 | 1.03 | 18 | 4 |
-| Phoenix Suns | 6.88 | 4 | 1.00 | 3 | 1 |
-| Philadelphia 76ers | 6.77 | 7 | 1.35 | 13 | 2 |
-| San Antonio Spurs | 6.68 | 5 | 1.01 | 13 | 4 |
-| Miami Heat | 6.67 | 4 | -- | 0 | 2 |
-| Boston Celtics | 6.42 | 5 | 1.00 | 5 | 2 |
-| Toronto Raptors | 6.23 | 7 | 1.18 | 5 | 0 |
-| Oklahoma City Thunder | 5.99 | 7 | 1.02 | 15 | 7 |
-| Dallas Mavericks | 5.96 | 8 | 1.40 | 5 | 1 |
-| New York Knicks | 5.92 | 4 | 1.29 | 7 | 0 |
-| Detroit Pistons | 5.84 | 7 | 1.25 | 13 | 3 |
+| Washington Wizards | 8.77 | 7 | 1.28 | 11 | 1 |
+| Chicago Bulls | 8.31 | 7 | 1.01 | 12 | 0 |
+| Los Angeles Clippers | 8.30 | 5 | 1.02 | 4 | 2 |
+| Memphis Grizzlies | 8.18 | 9 | 1.00 | 4 | 6 |
+| Golden State Warriors | 8.10 | 7 | 1.00 | 1 | 2 |
+| Utah Jazz | 7.83 | 6 | 1.39 | 9 | 5 |
+| Charlotte Hornets | 7.80 | 9 | 1.24 | 14 | 3 |
+| Orlando Magic | 7.80 | 4 | 1.07 | 6 | 2 |
+| Portland Trail Blazers | 7.77 | 9 | 1.06 | 8 | 0 |
+| Indiana Pacers | 7.75 | 6 | 1.30 | 7 | 0 |
+| Atlanta Hawks | 7.72 | 6 | 1.26 | 5 | 2 |
+| New Orleans Pelicans | 7.59 | 8 | 1.06 | 5 | 0 |
+| Houston Rockets | 7.42 | 9 | 1.33 | 6 | 0 |
+| Brooklyn Nets | 7.26 | 11 | 1.03 | 18 | 4 |
+| Milwaukee Bucks | 7.22 | 5 | 1.00 | 2 | 2 |
+| Sacramento Kings | 7.00 | 9 | 1.00 | 2 | 2 |
+| Miami Heat | 6.93 | 4 | -- | 0 | 2 |
+| Philadelphia 76ers | 6.83 | 7 | 1.35 | 13 | 2 |
+| Boston Celtics | 6.80 | 5 | 1.00 | 5 | 2 |
+| San Antonio Spurs | 6.72 | 5 | 1.01 | 13 | 4 |
+| Toronto Raptors | 6.54 | 7 | 1.18 | 5 | 0 |
+| Phoenix Suns | 6.30 | 4 | 1.00 | 3 | 1 |
+| New York Knicks | 6.03 | 4 | 1.29 | 7 | 0 |
+| Oklahoma City Thunder | 6.01 | 7 | 1.02 | 15 | 7 |
+| Dallas Mavericks | 5.89 | 8 | 1.40 | 5 | 1 |
+| Detroit Pistons | 5.87 | 7 | 1.25 | 13 | 3 |
 | Cleveland Cavaliers | 5.60 | 5 | 1.00 | 1 | 0 |
-| Los Angeles Lakers | 4.95 | 6 | 1.00 | 1 | 0 |
+| Los Angeles Lakers | 5.10 | 6 | 1.00 | 1 | 0 |
 | Minnesota Timberwolves | 4.38 | 4 | 1.00 | 3 | 2 |
-| Denver Nuggets | 4.20 | 3 | 1.00 | 2 | 3 |
+| Denver Nuggets | 4.30 | 3 | 1.00 | 2 | 3 |
 
 ## Atlanta Hawks
 
-### 1st Round Picks (avg grade 7.87)
+### 1st Round Picks (avg grade 7.72)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2029 ATL 1st | 8.3 | Great |
-| 2031 ATL 1st | 8.1 | Great |
+| 2029 ATL 1st | 8.5 | Great |
+| 2030 ATL 1st | 8.3 | Great |
+| 2031 ATL 1st | 8.3 | Great |
 | 2027 MIL/NO 1st (least favorable, swap-resolved) | 8.1 | Great |
-| 2030 ATL 1st | 7.9 | Great |
-| 2032 ATL 1st | 7.9 | Great |
-| 2033 ATL 1st | 6.9 | Good |
+| 2032 ATL 1st | 7.6 | Great |
+| 2033 ATL 1st | 5.5 | Above average |
 
 ### 2nd Round Picks (avg grade 1.26)
 
@@ -66,14 +66,14 @@
 
 ## Boston Celtics
 
-### 1st Round Picks (avg grade 6.42)
+### 1st Round Picks (avg grade 6.80)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2030 BOS 1st | 7.0 | Good |
-| 2031 BOS 1st | 7.0 | Good |
+| 2030 BOS 1st | 7.5 | Great |
+| 2031 BOS 1st | 7.5 | Great |
+| 2032 BOS 1st | 6.9 | Good |
 | 2027 BOS 1st | 6.6 | Good |
-| 2032 BOS 1st | 6.0 | Good |
 | 2033 BOS 1st | 5.5 | Above average |
 
 ### 2nd Round Picks (avg grade 1.00)
@@ -92,18 +92,18 @@
 
 ## Brooklyn Nets
 
-### 1st Round Picks (avg grade 7.22)
+### 1st Round Picks (avg grade 7.26)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2029 BKN 1st | 8.9 | Great |
-| 2030 BKN 1st | 8.8 | Great |
+| 2029 BKN 1st | 9.1 | Elite |
+| 2030 BKN 1st | 9.1 | Elite |
+| 2033 BKN 1st | 8.9 | Great |
 | 2031 BKN 1st | 8.5 | Great |
-| 2032 BKN 1st | 8.5 | Great |
-| 2033 BKN 1st | 8.3 | Great |
+| 2032 BKN 1st | 7.3 | Good |
 | 2027 BKN/HOU 1st (least favorable, swap-resolved) | 6.7 | Good |
-| 2029 NYK 1st | 6.4 | Good |
-| 2031 NYK 1st | 6.2 | Good |
+| 2029 NYK 1st | 6.6 | Good |
+| 2031 NYK 1st | 6.6 | Good |
 | 2027 NYK 1st | 6.1 | Good |
 | 2032 DEN 1st | 5.5 | Above average |
 | 2029 DAL/HOU/PHX 1st (least favorable, swap-resolved) | 5.5 | Above average |
@@ -112,8 +112,8 @@
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2028 BKN 2nd | 1.3 | Fringe / throw-in |
-| 2028 MEM 2nd | 1.3 | Fringe / throw-in |
+| 2028 MEM 2nd | 1.4 | Fringe / throw-in |
+| 2028 BKN 2nd | 1.1 | Fringe / throw-in |
 | 2028 ATL 2nd | 1.0 | Fringe / throw-in |
 | 2029 BKN 2nd | 1.0 | Fringe / throw-in |
 | 2029 DAL 2nd | 1.0 | Fringe / throw-in |
@@ -139,18 +139,18 @@
 
 ## Charlotte Hornets
 
-### 1st Round Picks (avg grade 8.13)
+### 1st Round Picks (avg grade 7.80)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 CHA 1st | 9.1 | Elite |
-| 2028 CHA 1st | 8.9 | Great |
-| 2029 CHA 1st | 8.8 | Great |
+| 2028 CHA 1st | 9.1 | Elite |
+| 2029 CHA 1st | 8.6 | Great |
 | 2027 DAL 1st (protected, doesn't convey #1-2) | 8.3 | Great |
-| 2030 CHA 1st | 8.3 | Great |
-| 2031 CHA 1st | 8.1 | Great |
-| 2032 CHA 1st | 8.1 | Great |
-| 2033 CHA 1st | 8.1 | Great |
+| 2031 CHA 1st | 8.3 | Great |
+| 2032 CHA 1st | 7.9 | Great |
+| 2030 CHA 1st | 7.3 | Good |
+| 2033 CHA 1st | 6.1 | Good |
 | 2027 MIA 1st (protected, doesn't convey #1-14) | 5.5 | Above average |
 
 ### 2nd Round Picks (avg grade 1.24)
@@ -179,17 +179,17 @@
 
 ## Chicago Bulls
 
-### 1st Round Picks (avg grade 8.69)
+### 1st Round Picks (avg grade 8.31)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 CHI 1st | 9.2 | Elite |
-| 2028 CHI 1st | 9.1 | Elite |
-| 2029 CHI 1st | 8.9 | Great |
-| 2030 CHI 1st | 8.6 | Great |
-| 2033 CHI 1st | 8.5 | Great |
-| 2032 CHI 1st | 8.3 | Great |
-| 2031 CHI 1st | 8.2 | Great |
+| 2028 CHI 1st | 9.2 | Elite |
+| 2029 CHI 1st | 8.8 | Great |
+| 2031 CHI 1st | 8.5 | Great |
+| 2032 CHI 1st | 8.2 | Great |
+| 2030 CHI 1st | 7.6 | Great |
+| 2033 CHI 1st | 6.7 | Good |
 
 ### 2nd Round Picks (avg grade 1.01)
 
@@ -228,13 +228,13 @@
 
 ## Dallas Mavericks
 
-### 1st Round Picks (avg grade 5.96)
+### 1st Round Picks (avg grade 5.89)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2032 DAL 1st | 8.3 | Great |
-| 2031 DAL 1st | 8.2 | Great |
-| 2033 DAL 1st | 8.2 | Great |
+| 2032 DAL 1st | 8.8 | Great |
+| 2033 DAL 1st | 8.3 | Great |
+| 2031 DAL 1st | 7.0 | Good |
 | 2027 DAL 1st (protected, doesn't convey #3-30) | 5.5 | Above average |
 | 2029 LAL 1st | 5.5 | Above average |
 | 2028 DAL/OKC 1st (least favorable, swap-resolved) | 5.5 | Above average |
@@ -256,11 +256,11 @@
 
 ## Denver Nuggets
 
-### 1st Round Picks (avg grade 4.20)
+### 1st Round Picks (avg grade 4.30)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2031 DEN 1st | 6.1 | Good |
+| 2031 DEN 1st | 6.4 | Good |
 | 2033 DEN 1st | 5.5 | Above average |
 | 2027 DEN 1st (protected, doesn't convey #6-30) | 1.0 | Fringe / throw-in |
 
@@ -278,12 +278,12 @@
 
 ## Detroit Pistons
 
-### 1st Round Picks (avg grade 5.84)
+### 1st Round Picks (avg grade 5.87)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 DET 1st | 7.0 | Good |
-| 2028 DET 1st | 6.4 | Good |
+| 2028 DET 1st | 6.6 | Good |
 | 2029 DET 1st | 5.5 | Above average |
 | 2030 DET 1st | 5.5 | Above average |
 | 2031 DET 1st | 5.5 | Above average |
@@ -315,17 +315,17 @@
 
 ## Golden State Warriors
 
-### 1st Round Picks (avg grade 8.16)
+### 1st Round Picks (avg grade 8.10)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2028 GS 1st | 8.8 | Great |
+| 2028 GS 1st | 8.9 | Great |
+| 2029 GS 1st | 8.8 | Great |
 | 2027 GS 1st | 8.6 | Great |
-| 2029 GS 1st | 8.6 | Great |
+| 2032 GS 1st | 8.6 | Great |
 | 2030 GS 1st (protected, doesn't convey #21-30) | 8.2 | Great |
-| 2032 GS 1st | 8.2 | Great |
-| 2031 GS 1st | 8.1 | Great |
-| 2033 GS 1st | 6.6 | Good |
+| 2033 GS 1st | 6.9 | Good |
+| 2031 GS 1st | 6.7 | Good |
 
 ### 2nd Round Picks (avg grade 1.00)
 
@@ -339,7 +339,7 @@
 
 ## Houston Rockets
 
-### 1st Round Picks (avg grade 7.33)
+### 1st Round Picks (avg grade 7.42)
 
 | Pick | Grade | Label |
 |---|---|---|
@@ -347,9 +347,9 @@
 | 2029 DAL/HOU/PHX 1st (most favorable, swap-resolved) | 9.2 | Elite |
 | 2027 PHX 1st | 8.9 | Great |
 | 2029 DAL/HOU/PHX 1st (rank 2 of 3, swap-resolved) | 7.5 | Great |
+| 2031 HOU 1st | 7.3 | Good |
 | 2028 HOU 1st | 7.0 | Good |
-| 2031 HOU 1st | 7.0 | Good |
-| 2030 HOU 1st | 6.2 | Good |
+| 2030 HOU 1st | 6.7 | Good |
 | 2032 HOU 1st | 5.5 | Above average |
 | 2033 HOU 1st | 5.5 | Above average |
 
@@ -366,16 +366,16 @@
 
 ## Indiana Pacers
 
-### 1st Round Picks (avg grade 8.13)
+### 1st Round Picks (avg grade 7.75)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2028 IND 1st | 8.9 | Great |
 | 2027 IND 1st | 8.6 | Great |
-| 2030 IND 1st | 8.5 | Great |
-| 2031 IND 1st | 8.1 | Great |
-| 2032 IND 1st | 8.1 | Great |
-| 2033 IND 1st | 6.6 | Good |
+| 2031 IND 1st | 8.3 | Great |
+| 2032 IND 1st | 7.9 | Great |
+| 2030 IND 1st | 7.3 | Good |
+| 2033 IND 1st | 5.5 | Above average |
 
 ### 2nd Round Picks (avg grade 1.30)
 
@@ -391,15 +391,15 @@
 
 ## Los Angeles Clippers
 
-### 1st Round Picks (avg grade 8.44)
+### 1st Round Picks (avg grade 8.30)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2029 IND 1st | 8.6 | Great |
-| 2030 LAC 1st | 8.6 | Great |
-| 2033 LAC 1st | 8.5 | Great |
-| 2031 LAC 1st | 8.3 | Great |
-| 2032 LAC 1st | 8.2 | Great |
+| 2033 LAC 1st | 9.1 | Elite |
+| 2030 LAC 1st | 8.9 | Great |
+| 2029 IND 1st | 8.5 | Great |
+| 2031 LAC 1st | 8.1 | Great |
+| 2032 LAC 1st | 6.9 | Good |
 
 ### 2nd Round Picks (avg grade 1.02)
 
@@ -416,12 +416,12 @@
 
 ## Los Angeles Lakers
 
-### 1st Round Picks (avg grade 4.95)
+### 1st Round Picks (avg grade 5.10)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2030 LAL 1st | 6.1 | Good |
-| 2031 LAL 1st | 6.1 | Good |
+| 2030 LAL 1st | 6.7 | Good |
+| 2031 LAL 1st | 6.4 | Good |
 | 2028 LAL 1st | 5.5 | Above average |
 | 2032 LAL 1st | 5.5 | Above average |
 | 2033 LAL 1st | 5.5 | Above average |
@@ -435,18 +435,18 @@
 
 ## Memphis Grizzlies
 
-### 1st Round Picks (avg grade 8.21)
+### 1st Round Picks (avg grade 8.18)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 MEM 1st | 9.2 | Elite |
-| 2028 MEM 1st | 9.1 | Elite |
+| 2032 MEM 1st | 8.8 | Great |
 | 2027 CLE/MIN/UTA 1st (most favorable, swap-resolved) | 8.8 | Great |
-| 2033 MEM 1st | 8.5 | Great |
-| 2031 MEM 1st | 8.3 | Great |
-| 2032 MEM 1st | 8.3 | Great |
-| 2031 PHX 1st | 8.1 | Great |
-| 2030 ORL 1st | 6.9 | Good |
+| 2033 MEM 1st | 8.6 | Great |
+| 2028 MEM 1st | 8.5 | Great |
+| 2031 PHX 1st | 8.3 | Great |
+| 2030 ORL 1st | 7.5 | Great |
+| 2031 MEM 1st | 7.2 | Good |
 | 2027 LAL 1st (protected, doesn't convey #1-4) | 6.7 | Good |
 
 ### 2nd Round Picks (avg grade 1.00)
@@ -468,12 +468,12 @@
 
 ## Miami Heat
 
-### 1st Round Picks (avg grade 6.67)
+### 1st Round Picks (avg grade 6.93)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2029 MIA 1st | 8.5 | Great |
-| 2032 MIA 1st | 7.2 | Good |
+| 2029 MIA 1st | 8.8 | Great |
+| 2032 MIA 1st | 7.9 | Great |
 | 2027 MIA 1st (protected, doesn't convey #15-30) | 5.5 | Above average |
 | 2030 MIA/MIL/POR 1st (least favorable, swap-resolved) | 5.5 | Above average |
 
@@ -485,15 +485,15 @@
 
 ## Milwaukee Bucks
 
-### 1st Round Picks (avg grade 7.60)
+### 1st Round Picks (avg grade 7.22)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2033 MIL 1st | 8.3 | Great |
-| 2031 MIL 1st | 8.2 | Great |
-| 2032 MIL 1st | 8.2 | Great |
-| 2031 MIA 1st | 7.8 | Great |
-| 2033 MIA 1st | 5.5 | Above average |
+| 2031 MIL 1st | 8.5 | Great |
+| 2032 MIL 1st | 8.1 | Great |
+| 2033 MIL 1st | 6.7 | Good |
+| 2033 MIA 1st | 6.6 | Good |
+| 2031 MIA 1st | 6.2 | Good |
 
 ### 2nd Round Picks (avg grade 1.00)
 
@@ -531,17 +531,17 @@
 
 ## New Orleans Pelicans
 
-### 1st Round Picks (avg grade 7.72)
+### 1st Round Picks (avg grade 7.59)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 MIL/NO 1st (most favorable, swap-resolved) | 9.5 | Elite |
+| 2033 NO 1st | 9.1 | Elite |
 | 2028 NO 1st | 8.9 | Great |
-| 2029 NO 1st | 8.9 | Great |
-| 2030 NO 1st | 8.6 | Great |
-| 2031 NO 1st | 8.3 | Great |
-| 2032 NO 1st | 8.3 | Great |
-| 2033 NO 1st | 8.3 | Great |
+| 2030 NO 1st | 8.9 | Great |
+| 2031 NO 1st | 8.2 | Great |
+| 2029 NO 1st | 8.1 | Great |
+| 2032 NO 1st | 7.0 | Good |
 | 2027 MIL/NO 1st (least favorable, swap-resolved) | 1.0 | Fringe / throw-in |
 
 ### 2nd Round Picks (avg grade 1.06)
@@ -556,11 +556,11 @@
 
 ## New York Knicks
 
-### 1st Round Picks (avg grade 5.92)
+### 1st Round Picks (avg grade 6.03)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2030 NYK 1st | 7.2 | Good |
+| 2030 NYK 1st | 7.6 | Great |
 | 2032 NYK 1st | 5.5 | Above average |
 | 2033 NYK 1st | 5.5 | Above average |
 | 2028 BKN/NYK 1st (least favorable, swap-resolved) | 5.5 | Above average |
@@ -579,11 +579,11 @@
 
 ## Oklahoma City Thunder
 
-### 1st Round Picks (avg grade 5.99)
+### 1st Round Picks (avg grade 6.01)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2028 DAL/OKC 1st (most favorable, swap-resolved) | 8.9 | Great |
+| 2028 DAL/OKC 1st (most favorable, swap-resolved) | 9.1 | Elite |
 | 2027 SA 1st (protected, doesn't convey #1-16) | 5.5 | Above average |
 | 2029 OKC 1st | 5.5 | Above average |
 | 2030 OKC 1st | 5.5 | Above average |
@@ -622,20 +622,20 @@
 
 ## Orlando Magic
 
-### 1st Round Picks (avg grade 7.45)
+### 1st Round Picks (avg grade 7.80)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 ORL 1st | 8.6 | Great |
-| 2031 ORL 1st | 7.5 | Great |
-| 2032 ORL 1st | 7.0 | Good |
-| 2033 ORL 1st | 6.7 | Good |
+| 2031 ORL 1st | 7.8 | Great |
+| 2032 ORL 1st | 7.6 | Great |
+| 2033 ORL 1st | 7.2 | Good |
 
-### 2nd Round Picks (avg grade 1.05)
+### 2nd Round Picks (avg grade 1.07)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2028 LAL/WAS 2nd (most favorable, swap-resolved) | 1.3 | Fringe / throw-in |
+| 2028 LAL/WAS 2nd (most favorable, swap-resolved) | 1.4 | Fringe / throw-in |
 | 2030 MIL 2nd | 1.0 | Fringe / throw-in |
 | 2032 ORL 2nd | 1.0 | Fringe / throw-in |
 | 2033 ORL 2nd | 1.0 | Fringe / throw-in |
@@ -648,17 +648,17 @@
 
 ## Philadelphia 76ers
 
-### 1st Round Picks (avg grade 6.77)
+### 1st Round Picks (avg grade 6.83)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2028 LAC 1st | 9.1 | Elite |
-| 2030 PHI 1st | 8.2 | Great |
-| 2031 PHI 1st | 7.6 | Great |
+| 2028 LAC 1st | 8.9 | Great |
+| 2030 PHI 1st | 8.6 | Great |
+| 2031 PHI 1st | 7.5 | Great |
 | 2027 PHI 1st | 6.9 | Good |
-| 2032 PHI 1st | 6.1 | Good |
+| 2032 PHI 1st | 5.5 | Above average |
 | 2033 PHI 1st | 5.5 | Above average |
-| 2028 PHI 1st (protected, doesn't convey #9-30) | 4.0 | Average |
+| 2028 PHI 1st (protected, doesn't convey #9-30) | 4.9 | Average |
 
 ### 2nd Round Picks (avg grade 1.35)
 
@@ -684,14 +684,14 @@
 
 ## Phoenix Suns
 
-### 1st Round Picks (avg grade 6.88)
+### 1st Round Picks (avg grade 6.30)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2032 PHX 1st | 8.1 | Great |
-| 2033 PHX 1st | 7.6 | Great |
+| 2032 PHX 1st | 7.9 | Great |
 | 2030 MEM/PHX/WAS 1st (least favorable, swap-resolved) | 6.0 | Good |
 | 2027 CLE/MIN/UTA 1st (least favorable, swap-resolved) | 5.8 | Above average |
+| 2033 PHX 1st | 5.5 | Above average |
 
 ### 2nd Round Picks (avg grade 1.00)
 
@@ -706,26 +706,26 @@
 
 ## Portland Trail Blazers
 
-### 1st Round Picks (avg grade 7.82)
+### 1st Round Picks (avg grade 7.77)
 
 | Pick | Grade | Label |
 |---|---|---|
-| 2028 MIL/POR 1st (most favorable, swap-resolved) | 9.2 | Elite |
-| 2029 BOS/MIL/POR 1st (most favorable, swap-resolved) | 9.2 | Elite |
-| 2030 MIL/POR 1st (most favorable, swap-resolved) | 9.1 | Elite |
+| 2028 MIL/POR 1st (most favorable, swap-resolved) | 9.4 | Elite |
+| 2029 BOS/MIL/POR 1st (most favorable, swap-resolved) | 9.4 | Elite |
+| 2030 MIL/POR 1st (most favorable, swap-resolved) | 8.9 | Great |
 | 2027 POR 1st | 8.3 | Great |
-| 2031 POR 1st | 7.9 | Great |
+| 2031 POR 1st | 7.8 | Great |
 | 2028 ORL 1st | 7.6 | Great |
-| 2032 POR 1st | 7.6 | Great |
-| 2033 POR 1st | 6.0 | Good |
+| 2033 POR 1st | 7.2 | Good |
+| 2032 POR 1st | 5.8 | Above average |
 | 2029 BOS/MIL/POR 1st (least favorable, swap-resolved) | 5.5 | Above average |
 
-### 2nd Round Picks (avg grade 1.09)
+### 2nd Round Picks (avg grade 1.06)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 NO/POR 2nd (least favorable, swap-resolved) | 1.4 | Fringe / throw-in |
-| 2028 SAC 2nd | 1.3 | Fringe / throw-in |
+| 2028 SAC 2nd | 1.1 | Fringe / throw-in |
 | 2027 MIN 2nd | 1.0 | Fringe / throw-in |
 | 2028 POR 2nd | 1.0 | Fringe / throw-in |
 | 2031 POR 2nd | 1.0 | Fringe / throw-in |
@@ -735,17 +735,17 @@
 
 ## Sacramento Kings
 
-### 1st Round Picks (avg grade 7.28)
+### 1st Round Picks (avg grade 7.00)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 SAC 1st | 9.2 | Elite |
-| 2028 SAC 1st | 9.1 | Elite |
-| 2029 SAC 1st | 8.9 | Great |
-| 2030 SAC 1st | 8.5 | Great |
-| 2032 SAC 1st | 8.5 | Great |
-| 2033 SAC 1st | 8.2 | Great |
-| 2031 MIN 1st | 6.6 | Good |
+| 2028 SAC 1st | 9.2 | Elite |
+| 2029 SAC 1st | 8.8 | Great |
+| 2032 SAC 1st | 8.3 | Great |
+| 2030 SAC 1st | 7.5 | Great |
+| 2031 MIN 1st | 6.9 | Good |
+| 2033 SAC 1st | 6.6 | Good |
 | 2031 SAC/SA 1st (least favorable, swap-resolved) | 5.5 | Above average |
 | 2027 SA 1st (protected, doesn't convey #17-30) | 1.0 | Fringe / throw-in |
 
@@ -762,12 +762,12 @@
 
 ## San Antonio Spurs
 
-### 1st Round Picks (avg grade 6.68)
+### 1st Round Picks (avg grade 6.72)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 ATL 1st | 8.6 | Great |
-| 2031 SAC/SA 1st (most favorable, swap-resolved) | 8.3 | Great |
+| 2031 SAC/SA 1st (most favorable, swap-resolved) | 8.5 | Great |
 | 2029 SA 1st | 5.5 | Above average |
 | 2032 SA 1st | 5.5 | Above average |
 | 2033 SA 1st | 5.5 | Above average |
@@ -798,15 +798,15 @@
 
 ## Toronto Raptors
 
-### 1st Round Picks (avg grade 6.23)
+### 1st Round Picks (avg grade 6.54)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 TOR 1st | 8.3 | Great |
-| 2028 TOR 1st | 7.0 | Good |
-| 2033 TOR 1st | 6.0 | Good |
-| 2029 TOR 1st | 5.8 | Above average |
-| 2030 TOR 1st | 5.5 | Above average |
+| 2033 TOR 1st | 7.3 | Good |
+| 2028 TOR 1st | 7.2 | Good |
+| 2029 TOR 1st | 6.0 | Good |
+| 2030 TOR 1st | 6.0 | Good |
 | 2031 TOR 1st | 5.5 | Above average |
 | 2032 TOR 1st | 5.5 | Above average |
 
@@ -822,16 +822,16 @@
 
 ## Utah Jazz
 
-### 1st Round Picks (avg grade 8.35)
+### 1st Round Picks (avg grade 7.83)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2028 CLE/UTA 1st (most favorable, swap-resolved) | 9.2 | Elite |
-| 2030 UTA 1st | 8.8 | Great |
-| 2032 UTA 1st | 8.5 | Great |
-| 2031 UTA 1st | 8.3 | Great |
-| 2033 UTA 1st | 8.1 | Great |
+| 2031 UTA 1st | 8.6 | Great |
+| 2032 UTA 1st | 8.3 | Great |
+| 2030 UTA 1st | 7.6 | Great |
 | 2027 CLE/MIN/UTA 1st (rank 2 of 3, swap-resolved) | 7.2 | Good |
+| 2033 UTA 1st | 6.1 | Good |
 
 ### 2nd Round Picks (avg grade 1.39)
 
@@ -856,16 +856,16 @@
 
 ## Washington Wizards
 
-### 1st Round Picks (avg grade 8.57)
+### 1st Round Picks (avg grade 8.77)
 
 | Pick | Grade | Label |
 |---|---|---|
 | 2027 WAS 1st | 9.1 | Elite |
+| 2029 WAS 1st | 9.1 | Elite |
+| 2032 WAS 1st | 9.1 | Elite |
 | 2030 PHX/WAS 1st (most favorable, swap-resolved) | 9.1 | Elite |
-| 2029 WAS 1st | 8.9 | Great |
-| 2031 WAS 1st | 8.5 | Great |
-| 2032 WAS 1st | 8.5 | Great |
-| 2033 WAS 1st | 8.3 | Great |
+| 2031 WAS 1st | 8.8 | Great |
+| 2033 WAS 1st | 8.6 | Great |
 | 2029 BOS/MIL/POR 1st (rank 2 of 3, swap-resolved) | 7.6 | Great |
 
 ### 2nd Round Picks (avg grade 1.28)

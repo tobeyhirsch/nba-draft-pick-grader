@@ -74,16 +74,25 @@ conferences.py  ---->  standings_sim.py  <----  draft_picks_data.py
         |                     |                   all 30 teams, 2027-2033)
         v                     v                          |
 draft_pipeline_321.py  <-----+                            v
-(play-in + 3-2-1 lottery,                         pick_resolver.py
- both rounds, per season)                         (classifies each
-        |                                          fragment: simple /
-        v                                          swap / unresolved;
-pick_restrictions_321.py                           runs a separate joint
-(real 2025-26 history ->                           trial batch per draft
- "no repeat #1 / no                                year, using market_
- 3-straight top-5" for 2027)                       ratings.py's or darko_
-        |                                          ratings.py's teams as
-        +------------------------------------------>appropriate)
+(play-in + 3-2-1 lottery,       ^                 pick_resolver.py
+ both rounds, per season)       |                 (classifies each
+        |                       |                  fragment: simple /
+        v                       |                  swap / unresolved;
+pick_restrictions_321.py        |                  runs a separate joint
+(real 2025-26 history ->        |                  trial batch per draft
+ "no repeat #1 / no             |                  year, using market_
+ 3-straight top-5" seeded       |                  ratings.py's or darko_
+ for 2027)                      |                  ratings.py's teams,
+        |                       |                  and each year's own
+        v                       |                  history_by_year, as
+run_real_league.py's            |                  appropriate)
+build_restriction_history_by_year() --------------------> ^
+(chains that history forward year over year,               |
+ 2027->2033, via advance_history() + derive_own_picks(),   |
+ re-running draft_pipeline_321.py's Monte Carlo each year   |
+ under the PRIOR year's history to get that year's own      |
+ modal outcome -- feeds the resulting history_by_year        |
+ into pick_resolver.py above)                                |
                                                             |
                                                             v
                                                     pick_valuation.py
@@ -177,7 +186,25 @@ they aren't wired into the automatic league-wide run.
   with the REAL 2025 and 2026 draft results (given directly, not simulated)
   so the very first 3-2-1 draft (2027) is constrained correctly: Washington
   can't get pick 1 (they had it in 2026), Utah can't land top-5 (they did
-  in both 2025 and 2026).
+  in both 2025 and 2026). `enforce_pick_restrictions()` re-seats any
+  restricted team by filling each slot 1..n with the first still-legal team
+  remaining in queue order -- a slot-by-slot fill, not the naive "bump the
+  violator down, shift the rest up" splice it started as. That splice
+  version worked fine for 2027 (at most one team restricted per rule this
+  year), but with two or more teams simultaneously restricted from the same
+  range -- which happens once restrictions are chained into later years,
+  see below -- it could bump one violator onto another and back, forever;
+  the current slot-by-slot version has no such failure mode and always
+  terminates. `advance_history()` (fold one year's own-pick outcomes into
+  the next year's history) and `derive_own_picks()` (collapse a full
+  Monte Carlo pick-count distribution to one representative "own pick" per
+  team, by MODE across trials -- see its docstring for why this is a
+  documented approximation, consistent with the rest of the pipeline's
+  independent-trials-per-year design, rather than one fully-correlated
+  multi-year chain) are what let `run_real_league.py`'s
+  `build_restriction_history_by_year()` chain this rule from the real 2027
+  seed all the way through the 2033 draft, instead of only enforcing it for
+  2027.
 - **`draft_pipeline_321.py`** -- ties a season simulation to the play-in
   game, the lottery draw, and the second round, all from one simulated
   season so a team's first- and second-round outcomes stay correlated.
@@ -344,9 +371,16 @@ they aren't wired into the automatic league-wide run.
 ### Orchestration and tests
 
 - **`run_real_league.py`** -- the real entry point. Calibrates all 30
-  teams' ratings from the market spreadsheet, grades every pick every team
-  owns (seeding the 2027 pick restrictions with real history), and writes
-  `league_pick_grades.md` and `projected_standings.md`.
+  teams' ratings from the market spreadsheet, chains the 3-2-1 pick
+  restrictions across every simulated year via
+  `build_restriction_history_by_year()` (seeded with real 2025-26 history
+  for 2027, then `pick_restrictions_321.advance_history()`/
+  `derive_own_picks()` carry it forward through 2033 -- `1000` trials/year,
+  `RESTRICTION_TRIALS`/`RESTRICTION_SEED`), prints a
+  `summarize_restrictions()` diagnostic of which team is blocked from which
+  slot in which year, grades every pick every team owns using that
+  per-year `history_by_year`, and writes `league_pick_grades.md` and
+  `projected_standings.md`.
 - **`test_swap_resolver_integration.py`** -- end-to-end regression check:
   builds a real 30-team league, resolves every team's full pick portfolio,
   and sanity-checks every swap's resolved distribution (probabilities sum
@@ -458,11 +492,20 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 - **The 3-2-1 lottery is applied uniformly to every future year (2027 and
   beyond)**, even though the league has only confirmed the format through
   the 2029 draft; 2030+ rules are pending a future Board of Governors vote.
-- **Pick restrictions are only seeded for 2027.** The "no repeat #1 / no
-  3-straight top-5" rule is enforced with real history for 2027 specifically;
-  other years are simulated unrestricted since there's no real (or modeled)
-  history to seed them with -- see `pick_resolver.py`'s `history` parameter
-  docstring.
+- **Pick restrictions are now chained across every simulated year (2027
+  through 2033), not just 2027.** `run_real_league.build_restriction_
+  history_by_year()` seeds 2027 with the real 2025-26 history as before,
+  then carries it forward year by year: each year's full Monte Carlo
+  pick-count distribution is collapsed to a single MODAL (most frequent)
+  "own pick" per team via `pick_restrictions_321.derive_own_picks()`, which
+  is what feeds the next year's restriction check via `advance_history()`.
+  This is a documented approximation, not a fully-correlated multi-year
+  chain (a real one would need every trial's 2028 draft to depend on that
+  SAME trial's 2027 result, which no other part of this pipeline does
+  either -- every draft year already runs as its own independent trial
+  batch, e.g. `build_projected_standings()`) -- it can misjudge a team's
+  restriction status only in the rare case where a year's outcome is a
+  near-even three-way-or-worse split with no clear plurality pick number.
 - **No cap-holds data** (pending free agents, unsigned draft rights) --
   `cap_sheet_data.py`'s `TEAM_CAP_HOLDS` is empty; the source CSV only
   covers signed active contracts.

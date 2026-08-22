@@ -142,7 +142,8 @@ def build_pick_assets(team_name: str,
                        current_year: int = 2026,
                        fallback_value: float = 0.0,
                        history: Optional[Dict[str, List[int]]] = None,
-                       teams_by_year: Optional[Dict[int, Sequence]] = None
+                       teams_by_year: Optional[Dict[int, Sequence]] = None,
+                       history_by_year: Optional[Dict[int, Optional[Dict[str, List[int]]]]] = None
                        ) -> Tuple[List[PickAsset], List[UnresolvedEntry]]:
     """
     teams_for_simulation: the real 30-team league (standings_sim.Team
@@ -178,12 +179,28 @@ def build_pick_assets(team_name: str,
         e.g. pick_restrictions_321.DEFAULT_2027_HISTORY to enforce the real
         "no repeat #1 / no 3-straight top-5" restrictions -- seeded from
         actual 2025-2026 results. Has no effect if teams_for_simulation
-        isn't given. Only factually grounded for the 2027 draft specifically
-        (that's the only year with a real, known restriction carry-in), so
-        it's applied ONLY to fragments whose year == 2027; every other
-        year's fragments always use the unrestricted distribution, even if
-        they share a team code with a 2027 fragment in the same portfolio.
-        SCOPING: without `teams_by_year`, this pipeline still doesn't model
+        isn't given. LEGACY / fallback only: applied ONLY to fragments
+        whose year == 2027, every other year's fragments use the
+        unrestricted distribution -- ignored entirely if `history_by_year`
+        is given (see below). Kept only so existing callers that don't
+        pass `history_by_year` get EXACTLY their old behavior back,
+        unchanged.
+
+    history_by_year: optional {draft_year: restriction-state-or-None},
+        e.g. run_real_league.build_restriction_history_by_year()'s output
+        -- the "no repeat #1 / no 3-straight top-5" restriction CHAINED
+        across every simulated year, not just 2027. A fragment dated year
+        Y uses history_by_year.get(Y) (None if Y isn't a key, or if it
+        maps to None -- either way, no restriction enforced that year).
+        When this is given, the legacy `history` parameter above is
+        ignored completely. See build_restriction_history_by_year()'s
+        docstring for how each year's chained state is derived (it can't
+        be a single fully-correlated multi-year Monte Carlo chain without
+        a bigger rearchitecture -- see that function for the documented
+        approximation used instead, consistent with this pipeline's
+        existing per-year-independent-trials design elsewhere).
+
+    SCOPING: without `teams_by_year`, this pipeline still doesn't model
         multi-year evolving team strength -- every future year's pick
         distribution for a team is drawn from the same one-season
         simulation (current ratings), only time-discounted via years_away.
@@ -220,18 +237,24 @@ def build_pick_assets(team_name: str,
         years_needing_sim = {year for year, _, _, pick_num, _ in simple_picks if pick_num is None}
         years_needing_sim.update(swap.year for swap in swap_picks)
 
-        # Dedupe by (league identity, history-applies): many years can
-        # resolve to the exact same league (e.g. every year teams_by_year
-        # doesn't cover falls back to teams_for_simulation) -- run one
-        # simulation batch per distinct combo, not one per year.
-        batch_cache: Dict[Tuple[int, bool], Dict[str, Dict[str, List[int]]]] = {}
+        # Dedupe by (league identity, restriction-state identity): many
+        # years can resolve to the exact same league+history combo (e.g.
+        # every year teams_by_year doesn't cover falls back to
+        # teams_for_simulation, and years with no restriction state both
+        # map to history=None) -- run one simulation batch per distinct
+        # combo, not one per year.
+        batch_cache: Dict[Tuple[int, Optional[int]], Dict[str, Dict[str, List[int]]]] = {}
         for year in years_needing_sim:
             league = (teams_by_year or {}).get(year, teams_for_simulation)
-            use_history = history is not None and year == 2027
-            cache_key = (id(league), use_history)
+            if history_by_year is not None:
+                year_history = history_by_year.get(year)
+            else:
+                # LEGACY fallback -- see `history` param docstring.
+                year_history = history if (history is not None and year == 2027) else None
+            cache_key = (id(league), id(year_history) if year_history is not None else None)
             if cache_key not in batch_cache:
                 joint = joint_pick_number_trials(league, needed_names, trials=trials, seed=seed,
-                                                  history=history if use_history else None)
+                                                  history=year_history)
                 batch_cache[cache_key] = {c: joint[TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
             joint_tables[year] = batch_cache[cache_key]
 
