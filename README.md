@@ -327,16 +327,50 @@ they aren't wired into the automatic league-wide run.
 
 ### Ownership resolution layer
 
-- **`swap_resolver.py`** -- resolves flat "TEAM1/TEAM2 (Qualifier) ROUND"
-  swap language into an actual probability distribution, using
-  `joint_pick_number_trials()`'s correlated trials. Conservative by design:
-  only resolves single-fragment comparisons among 2-4 named teams; leaves
-  nested/elliptical language and cross-year conditionals unresolved with an
-  explicit reason rather than guessing.
+- **`swap_resolver.py`** -- resolves four tiers of conditional pick
+  language into an actual probability distribution, all built on
+  `joint_pick_number_trials()`'s correlated trials so comparisons/conditions
+  use the SAME simulated season for every team involved:
+    1. Flat "TEAM1/TEAM2[/.../TEAM5] (Qualifier) ROUND [(If #A-B)]" swaps
+       (up to 5 named teams).
+    2. Same-year, single-team cross-pick conditionals -- "TEAM ROUND (If
+       YEAR OTHER_TEAM ROUND is #A-B)", e.g. "PHI 2nd (If 2028 PHI 1st is
+       #1-8)" -- the pick only conveys in trials where the named condition
+       holds that SAME year (`ConditionalPick`/`PickAsset.convey_probability`).
+    3. 2-level NESTED swaps -- one member of a flat swap is itself a
+       parenthesized flat sub-swap, e.g. "ATL/(CLE/UTA (Less Favorable))
+       (More Favorable) 1st" (`NestedSwap`, evaluated per-trial via a small
+       recursive tree walk).
+    4. A bare "(#A-B)" protection range with no "If" text, but ONLY when
+       edge-anchored to one boundary of the round's own number range --
+       the same safety net that already governed whether this could ever
+       resolve to anything.
+  Deliberately still conservative past that: a team carrying its OWN inline
+  range condition inside a swap list (e.g. "DEN (If #6-30)/LAC/OKC...") is
+  REJECTED rather than resolved, because that same surface syntax covers at
+  least two different real mechanics (the pool shrinking to whoever's left,
+  vs. the whole fragment simply not conveying) and the raw text alone
+  doesn't say which -- guessing between them risks exactly the
+  "plausible-looking but wrong number" this module's docstring warns
+  against. A REORDERED "(If #A-B)" appearing before the qualifier (instead
+  of after, e.g. "ATL/HOU (If #31-55) (More Favorable) 2nd") is only
+  accepted when a differently-ordered sibling fragment elsewhere in the
+  data CONFIRMS it's an ordinary swap-result protection (see
+  `_confirmed_trailing_swap_protections()`) -- otherwise it's just as
+  likely to be a per-team gate in disguise (confirmed by a real example:
+  Memphis's 2029 "MEM/ORL (If #3-30) (More Favorable) 1st" looks identical
+  to the confirmed-safe ATL/HOU case, but Orlando's own complementary
+  fragment shows the condition is really about ORL's own pick number, not
+  the swap result -- left unresolved). Cross-year conditionals (the
+  condition's year differs from the pick's own year) and true multi-year
+  protection chains are still out of scope for the reason stated above --
+  they need multiple draft years correlated within the same trial, which
+  this pipeline's per-year-independent-trials design doesn't support.
 - **`pick_resolver.py`** -- the orchestrator for one team's whole pick
-  portfolio. Classifies every fragment (simple / swap / unresolved), and
-  runs a joint trial batch per distinct draft year that portfolio needs
-  (via `teams_by_year`, e.g. `darko_ratings.py`'s evolved 2028-2032 teams --
+  portfolio. Classifies every fragment into one of five buckets (simple /
+  flat swap / cross-pick conditional / nested swap / unresolved), and runs
+  a joint trial batch per distinct draft year that portfolio needs (via
+  `teams_by_year`, e.g. `darko_ratings.py`'s evolved 2028-2032 teams --
   years not covered fall back to a single shared batch against the base
   league, same as before `teams_by_year` existed), returning ready-to-grade
   `PickAsset` objects plus a list of what's still unresolved and why.
@@ -358,10 +392,12 @@ they aren't wired into the automatic league-wide run.
   parametric rookie-scale salary approximation for connecting a pick's
   projected slot to its likely cap hit.
 - **`pick_grading.py`** -- `PickAsset` (one pick: known slot or a
-  probability distribution, optional protection range, time discount for
-  future years) and the 1-10 grade, which is literally the pick's
-  percentile rank against all 60 draft slots on the `pick_valuation.py`
-  curve.
+  probability distribution, optional protection range, optional
+  `convey_probability` for a pick whose existence is itself conditional on
+  a DIFFERENT pick's outcome -- see `swap_resolver.py`'s cross-pick
+  conditional tier -- and a time discount for future years) and the 1-10
+  grade, which is literally the pick's percentile rank against all 60
+  draft slots on the `pick_valuation.py` curve.
 - **`grading.py`** -- two additional, standalone graders: `grade_trade()`
   (value received vs. given -> letter grade) and `grade_selection()` (did a
   team take the best available prospect relative to your own board). Both
@@ -414,12 +450,22 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 
 ## Known gaps (honest status, not hidden)
 
-- **58 of 393 pick fragments across the league don't auto-resolve** (last
-  checked): 28 have nested/elliptical swap language the parser doesn't
-  attempt, 23 are cross-pick conditionals that depend on a *different*
-  pick's outcome, 5 don't match any known pattern, 2 are ambiguous
-  parenthetical ranges. `pick_resolver.py`'s output always lists these with
-  a specific reason rather than silently guessing.
+- **32 of 419 pick fragments across the league don't auto-resolve** (last
+  checked -- down from an earlier 58 of 393, after `swap_resolver.py`
+  gained the same-year cross-pick conditional, nested-swap, and
+  edge-anchored-bare-range tiers described above): 21 have swap language
+  this conservative parser deliberately declines to guess at -- a
+  per-member inline condition whose real-world semantics are ambiguous
+  from the text alone (dynamic pool vs. all-or-nothing gate -- see
+  `swap_resolver.py`'s module note), an unconfirmed reordered protection,
+  or a genuine elliptical continuation fragment; 7 are cross-pick
+  conditionals where the condition's year differs from the pick's own year
+  (still needs multiple draft years correlated within the same trial, out
+  of scope for the reason given in `swap_resolver.py`); 4 don't match any
+  known pattern (including two literal "(conditional chain)" placeholders
+  in the source data for Denver's multi-year protection chain, and one
+  fragment with mismatched parens). `pick_resolver.py`'s output always
+  lists these with a specific reason rather than silently guessing.
 - **Multi-year team-strength evolution is now partial, not absent.** The
   2028-2032 drafts use `darko_ratings.py`'s DARKO+longevity-evolved ratings
   instead of a frozen snapshot -- but it's a bounded, honestly-caveated

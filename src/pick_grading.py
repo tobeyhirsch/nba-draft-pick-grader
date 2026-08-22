@@ -94,6 +94,21 @@ class PickAsset:
         (default 0.0 -- i.e. it's simply lost that year). If the protection
         converts to something specific (e.g. "becomes an unprotected 2nd if
         it doesn't convey"), pass that asset's pick_value() here instead.
+    convey_probability: for a pick whose very existence is conditioned on a
+        DIFFERENT pick's outcome (e.g. "MIA 1st, if 2027 MIA 1st is #15-30"
+        -- Charlotte only gets this pick at all if Miami's OWN pick that
+        year lands in that range), the probability (0-1) that the
+        condition holds, i.e. that this pick conveys at all. Leave None
+        for a pick that always exists (the ordinary case). When set,
+        `pick_probabilities` should be the distribution CONDITIONED ON
+        conveying (normalized over only the trials where the condition
+        held) -- `_raw_value()` then combines `convey_probability * (value
+        when it conveys, protection_range still applied within that
+        branch) + (1 - convey_probability) * fallback_value`. This is a
+        DIFFERENT axis from `protection_range` (which conditions on THIS
+        pick's own number) -- the two compose cleanly, convey_probability
+        gates first, then protection_range applies to whatever value
+        results when it did convey.
     years_away: 0 for this year's pick, 1 for next year's, etc. -- drives
         the time discount.
     """
@@ -102,32 +117,43 @@ class PickAsset:
     pick_probabilities: Optional[Dict[int, float]] = None
     protection_range: Optional[Tuple[int, int]] = None
     fallback_value: float = 0.0
+    convey_probability: Optional[float] = None
     years_away: int = 0
 
     def _raw_value(self) -> float:
+        if self.convey_probability is not None and self.convey_probability <= 0:
+            # Never conveys in any observed trial -- skip straight to
+            # fallback rather than requiring a (necessarily empty)
+            # pick_probabilities dict.
+            return self.fallback_value
+
         if self.pick_number is not None:
             if self.protection_range and self.protection_range[0] <= self.pick_number <= self.protection_range[1]:
-                return self.fallback_value
-            return pick_value(self.pick_number)
-
-        if self.pick_probabilities is not None:
+                conditional_value = self.fallback_value
+            else:
+                conditional_value = pick_value(self.pick_number)
+        elif self.pick_probabilities is not None:
             total_prob = sum(self.pick_probabilities.values())
             if total_prob <= 0:
                 raise ValueError(f"{self.label!r}: pick_probabilities must sum to > 0")
             if not self.protection_range:
-                return expected_value_of_distribution(self.pick_probabilities)
+                conditional_value = expected_value_of_distribution(self.pick_probabilities)
+            else:
+                lo, hi = self.protection_range
+                ev = 0.0
+                for pick, prob in self.pick_probabilities.items():
+                    p = prob / total_prob
+                    if lo <= pick <= hi:
+                        ev += p * self.fallback_value
+                    else:
+                        ev += p * pick_value(pick)
+                conditional_value = ev
+        else:
+            raise ValueError(f"{self.label!r} needs either pick_number or pick_probabilities set")
 
-            lo, hi = self.protection_range
-            ev = 0.0
-            for pick, prob in self.pick_probabilities.items():
-                p = prob / total_prob
-                if lo <= pick <= hi:
-                    ev += p * self.fallback_value
-                else:
-                    ev += p * pick_value(pick)
-            return ev
-
-        raise ValueError(f"{self.label!r} needs either pick_number or pick_probabilities set")
+        if self.convey_probability is not None:
+            return self.convey_probability * conditional_value + (1 - self.convey_probability) * self.fallback_value
+        return conditional_value
 
     def discounted_value(self, annual_discount_rate: float = DEFAULT_ANNUAL_DISCOUNT) -> float:
         return self._raw_value() * ((1 - annual_discount_rate) ** self.years_away)
