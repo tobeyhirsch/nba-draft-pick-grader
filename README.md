@@ -152,7 +152,12 @@ they aren't wired into the automatic league-wide run.
   pre-resolved, since resolving conditional language requires simulation
   (see `pick_resolver.py` below). The 2026 draft has concluded, so each
   team's already-resolved 2026 selection(s) were removed -- this table now
-  starts at 2027, the next draft the pipeline actually projects.
+  starts at 2027, the next draft the pipeline actually projects. Refreshed
+  by reading the live page directly in Chrome (not the WebFetch tool,
+  which was tried first and proved unreliable on this page's dense nested
+  swap/condition notation -- see the module's docstring for specifics and
+  for how the previously-suspicious Toronto/Phoenix "(NO PICKS)" results
+  were independently cross-checked before being trusted).
 - **`cap_sheet_data.py`** -- parses `PlayerSalariesCSV.csv` into
   `roster_cap.Contract`/`CapSheet` objects for all 30 teams at import time.
   Its docstring has the full history of why this superseded four earlier
@@ -325,6 +330,112 @@ they aren't wired into the automatic league-wide run.
   (Bones Hyland / Nah'Shon Hyland) still need a small hand-verified alias
   table local to whichever module is doing that specific join.
 
+### Forward-looking draft-value layer (NEW)
+
+- **`pick_outcome_model.py`** -- NEW: turns a pick number into a probability
+  distribution over five real-world outcome tiers (Superstar, Star/All-Star,
+  Above-average starter, Contributor, Bust), then into an assumed team
+  rating (DPM) contribution. `BUCKET_TIER_PROBS` (picks 1-30, in 5-pick
+  buckets) is fit directly from the 2015-2025 draft-outcomes spreadsheet you
+  provided (`data/NBA_Draft_Picks_20152025.xlsx`) -- verified via this
+  module's own `__main__`, which re-derives the buckets from the sheet and
+  confirms they match exactly. `ROUND2_TIER_PROBS` (picks 31-60) is a
+  documented judgment call, not fit from data, since that sheet only covers
+  the first round. `TIER_DPM` (assumed DPM by tier) is anchored against
+  `data/darkodpmleaderboard.csv`'s real 530-player DPM distribution.
+  `TIER_MPG` (assumed minutes by tier -- correlated with the REALIZED
+  outcome, not the pick/round, so a bust and a superstar from the same pick
+  aren't assigned the same minutes) and `RAMP_BY_YEARS_SINCE_DRAFT` (a
+  drafted player's assumed value phases in: 30%/65%/90%/100% at years
+  1/2/3/4+ post-draft) are both flagged judgment calls too. `team_dpm_delta()`
+  combines all of the above into one number: the expected DPM a team's
+  rating should move given a pick number, outcome tier, and years since
+  drafted.
+- **`pick_ownership_resolver.py`** -- NEW: answers, for ONE concrete
+  simulated season (one trial, one year, one world), which team actually
+  ends up with each of the 60 picks -- the missing link between "team X
+  earned pick #7 by its own record" and "team Y is the one who actually
+  gets to make that selection." Deliberately a separate module from
+  `pick_resolver.py`/`swap_resolver.py`: those two build PROBABILISTIC
+  `PickAsset`s (a `{pick_number: probability}` distribution aggregated
+  across many simulated seasons, for grading one team's portfolio in
+  isolation); this module answers a single-trial question instead, reusing
+  the exact same fragment parsing and per-trial evaluators those two
+  modules already have (`SIMPLE_PICK_RE`/`SIMPLE_PROTECTED_RE` from
+  `pick_resolver.py`; `parse_swap_fragment`/`parse_conditional_pick_fragment`/
+  `parse_nested_swap_fragment`/`_eval_nested_swap_node` from
+  `swap_resolver.py`) rather than reimplementing any of it. Fragments are
+  parsed ONCE and cached (`parsed_fragments_by_year()`) since
+  `draft_picks_data.py`'s text is static -- only the realized pick numbers
+  change trial to trial. Resolves the same 91% of real fragments
+  (410 of 451) `pick_resolver.py` already resolves elsewhere (simple/
+  protected picks, flat swaps, same-year cross-pick conditionals, 2-level
+  nested swaps); the remaining 9% (cross-year conditionals, nested/
+  elliptical text) credit nobody for that pick that trial rather than
+  guessing.
+  **Real data-quality issue found and handled, not hidden:** cross-
+  checking every team's fragments against every other team's for the same
+  physical pick (run `python3 pick_ownership_resolver.py` to reproduce)
+  found 3 team-years (all 2029: Toronto's 1st, Indiana's and Washington's
+  2nds) where LD Sport's own per-team pages list the SAME pick,
+  unconditionally, under TWO different teams -- e.g. Toronto's page says
+  "TOR 1st" (kept) while the LA Clippers' page ALSO says "TOR 1st"
+  (acquired), with no qualifying language distinguishing them. This is a
+  genuine conflict in the source data, not a parsing bug -- `swap_resolver.py`
+  never needed to notice it before, since it only ever grades one team's
+  portfolio in isolation. `resolve_pick_ownership_for_year()` detects any
+  pick claimed by more than one distinct receiving team in the same trial
+  and credits NEITHER, the same "don't guess" philosophy as an unresolved
+  fragment, rather than arbitrarily picking a side the data itself doesn't
+  disambiguate. Verified clean (0 duplicate credits) across 500 synthetic
+  trials x 7 years after this fix.
+- **`sequential_league_sim.py`** -- NEW: the "does drafting well actually
+  compound" model, now routed through REAL pick ownership per an explicit
+  follow-up request (an earlier version credited each team for its own
+  natural draft slot only -- see below). Everywhere ELSE in this pipeline,
+  each draft year 2027-2033 is simulated as its own independent trial batch
+  (see `draft_pipeline_321.py`'s and `run_real_league.py`'s docstrings) --
+  no year's simulated outcome affects another year's. This module is the
+  one exception. Per simulated "world," per year: (1) project that year's
+  team strength (decay-only DARKO projection + this world's accumulated
+  draft-value delta from every pick actually owned in prior years); (2) run
+  the season + lottery + both draft rounds (`_simulate_321_draft_core` +
+  `simulate_second_round_order`), including the no-repeat-#1 / no-3-
+  straight-top-5 restrictions, chained forward exactly as elsewhere; (3)
+  resolve REAL pick ownership for that trial
+  (`pick_ownership_resolver.resolve_pick_ownership_for_year`); (4)-(6)
+  sample each actually-owned pick's outcome tier via
+  `pick_outcome_model.sample_outcome_tier()` and credit it to the team that
+  really owns it, not the team whose record generated it; (7) convert to a
+  DPM delta via `pick_outcome_model.team_dpm_delta()` (ramping in over 4
+  years) and then to Elo via the pipeline's existing DARKO-to-Elo fit; (8)
+  that updated rating feeds the next year, repeating through 2033. Run
+  thousands of worlds and average (`run_worlds()` / `summarize()`) and the
+  result answers "how much does the picks a team actually owns tend to move
+  its rating by year Y," which nothing else in the pipeline can answer. At
+  a 3,000-world run, the league-average value added grows from 0 (2027, by
+  construction) to about +2.7 Elo (2033) -- smaller and noisier than the
+  natural-slot-only version's +6.3, because real trades concentrate picks
+  onto some teams and strip others entirely (avg picks owned per team
+  ranges from 1.48 to 2.00 across the 7 years, vs. a flat 2.00 under the
+  old natural-slot assumption) -- with much wider real spread by team
+  (roughly +45 to -51 Elo by 2033, driven by real trade activity on top of
+  the ordinary lottery-parity mechanism, not parity alone).
+  **Bug fixed during earlier development (natural-slot version):** an
+  earlier version of `run_worlds()` built each team's per-year pick number
+  via `{**first_round, **second_round}` -- since both dicts are keyed by
+  the same 30 team names, that merge let `second_round`'s value silently
+  overwrite `first_round`'s for every team, so every team's own first-round
+  pick (where nearly all the positive expected value lives) was discarded
+  before a tier was ever sampled for it, and only the (usually negative-
+  value) second-round pick got credited. That produced a strongly,
+  consistently NEGATIVE league-average result that didn't match the hand-
+  computed analytic expectation (slightly positive) -- confirmed as a real
+  bug, not sampling noise, via a 3,000-world run before the fix.
+- See the interactive report (published as a Claude Artifact and delivered
+  alongside this package) for the full year-by-year chart, all 30 teams
+  ranked by projected 2033 value added, and the sortable trajectory table.
+
 ### Ownership resolution layer
 
 - **`swap_resolver.py`** -- resolves four tiers of conditional pick
@@ -450,22 +561,27 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 
 ## Known gaps (honest status, not hidden)
 
-- **32 of 419 pick fragments across the league don't auto-resolve** (last
-  checked -- down from an earlier 58 of 393, after `swap_resolver.py`
-  gained the same-year cross-pick conditional, nested-swap, and
-  edge-anchored-bare-range tiers described above): 21 have swap language
-  this conservative parser deliberately declines to guess at -- a
-  per-member inline condition whose real-world semantics are ambiguous
-  from the text alone (dynamic pool vs. all-or-nothing gate -- see
-  `swap_resolver.py`'s module note), an unconfirmed reordered protection,
-  or a genuine elliptical continuation fragment; 7 are cross-pick
-  conditionals where the condition's year differs from the pick's own year
-  (still needs multiple draft years correlated within the same trial, out
-  of scope for the reason given in `swap_resolver.py`); 4 don't match any
-  known pattern (including two literal "(conditional chain)" placeholders
-  in the source data for Denver's multi-year protection chain, and one
-  fragment with mismatched parens). `pick_resolver.py`'s output always
-  lists these with a specific reason rather than silently guessing.
+- **41 of 451 pick fragments across the league don't auto-resolve** (last
+  checked, after `draft_picks_data.py` was re-synced from LD Sport's live
+  page -- see that module's docstring for the refresh process; up from 32
+  of 419 mainly because the live text turned out to have MORE precise/
+  nested swap language in a handful of cells than the prior snapshot did,
+  not because anything regressed): 26 have swap language this conservative
+  parser deliberately declines to guess at -- a per-member inline condition
+  whose real-world semantics are ambiguous from the text alone (dynamic
+  pool vs. all-or-nothing gate -- see `swap_resolver.py`'s module note), an
+  unconfirmed reordered protection, or a genuine elliptical continuation
+  fragment; 13 are cross-pick conditionals where the condition's year
+  differs from the pick's own year (still needs multiple draft years
+  correlated within the same trial, out of scope for the reason given in
+  `swap_resolver.py`); 2 don't match any known pattern. Notably, the two
+  literal "(conditional chain)" placeholders that used to sit in Denver's
+  multi-year protection chain (surfaced via OKC's traded-for Denver picks)
+  are gone now that the live refresh pulled the real notation for those
+  cells -- they still don't auto-resolve (now correctly bucketed as
+  cross-pick conditionals), but the resolver is no longer looking at a
+  placeholder. `pick_resolver.py`'s output always lists these with a
+  specific reason rather than silently guessing.
 - **Multi-year team-strength evolution is now partial, not absent.** The
   2028-2032 drafts use `darko_ratings.py`'s DARKO+longevity-evolved ratings
   instead of a frozen snapshot -- but it's a bounded, honestly-caveated
