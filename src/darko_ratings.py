@@ -91,14 +91,22 @@ counterbalancing term first, which no supplied data source currently
 covers).
 
 WHAT ELSE THIS DOES NOT MODEL:
-  - Skill trajectories for players who DON'T leave. A player projected to
-    still be active at offset +5 is scored at their CURRENT DPM, not an
-    age-adjusted one -- the longevity file gives presence, not future
-    skill level, and no aging-curve data was supplied. (player_value_regression.py
-    DOES age-adjust the DPM INPUT to this module for players with enough
-    multi-year history -- see that module -- but that's a one-time
-    next-season projection, held flat afterward; it isn't a per-future-year
-    aging curve either.)
+  - Skill trajectories for players who DON'T leave, PARTIALLY addressed.
+    When a player_value_regression.ProjectionContext is passed in (see
+    projection_ctx on team_net_rating/all_teams_net_ratings/
+    future_year_teams), a player still active at offset k is scored at
+    that offset's OWN re-projected DPM (project_season's age/age^2
+    features advanced by k extra years, via _dpm_for_offset below) rather
+    than one fixed value reused at every future year -- so a player
+    already trending old/declining is no longer scored identically at
+    2028 and 2032. This is still bounded, though: only the AGE axis
+    re-projects per offset; most_recent_composite/trend stay anchored to
+    the player's last real observed data (see project_season's docstring
+    for why), so this captures the model's fitted aging-CURVE shape for
+    further-out years without pretending to extrapolate a noisy few-point
+    recent-form trend that far out. Without a projection_ctx (the
+    default), behavior is unchanged from before: player.dpm is reused flat
+    at every offset.
   - Trades, free agency, or draft picks converting into new rostered
     players. This is today's roster (whichever team DARKO currently has
     them on -- see roster_continuity.py's TEAM-MISMATCH DISCOVERY for a
@@ -138,6 +146,7 @@ from standings_sim import Team
 from data_paths import find_data_file
 from roster_continuity import continuity as contract_continuity
 from trusted_rosters import trusted_team_for
+from player_value_regression import ProjectionContext
 
 DPM_CSV = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
 LONGEVITY_CSV = find_data_file("darkolongevityprojections.csv", os.path.dirname(os.path.abspath(__file__)))
@@ -226,7 +235,29 @@ def _group_by_team(players: Sequence[DarkoPlayer]) -> Dict[str, List[DarkoPlayer
     return by_team
 
 
-def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0) -> float:
+def _dpm_for_offset(player: DarkoPlayer, offset: int, projection_ctx: Optional[ProjectionContext]) -> float:
+    """
+    The DPM to use for `player` at `offset` years out. If projection_ctx is
+    given and covers this player, re-projects their DPM specifically for
+    this offset (player_value_regression.project_season, years_ahead =
+    offset + 1 -- offset=0's own DPM already IS years_ahead=1 from that
+    module's last real data point, so offset k needs one further year of
+    aging on top of that anchor) instead of reusing the same fixed value
+    for every future year. Falls back to player.dpm (today's flat-hold
+    behavior) when there's no context or the player has too little history
+    to re-project -- never a data loss, only an upgrade where there's
+    enough history to support one, same convention as
+    player_value_regression.load_darko_players_with_projection.
+    """
+    if projection_ctx is not None and offset >= 1:
+        reprojected = projection_ctx.dpm_at(player.name, years_ahead=offset + 1)
+        if reprojected is not None:
+            return reprojected
+    return player.dpm
+
+
+def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0,
+                     projection_ctx: Optional[ProjectionContext] = None) -> float:
     """
     MPG-weighted average DPM at `offset` years from now (0 = current
     roster, no decay). Denominator is fixed at the team's CURRENT total
@@ -238,6 +269,12 @@ def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0) -> flo
     presence alone doesn't (leaving via free agency/trade while still
     active in the league). Not applied at offset=0: the current roster is
     the current roster by definition, nothing to weight.
+
+    projection_ctx (player_value_regression.ProjectionContext, optional):
+    when given, each player's DPM is re-projected specifically for this
+    offset instead of reusing the same fixed value at every future year --
+    see _dpm_for_offset. None (the default) reproduces the exact prior
+    flat-hold behavior.
     """
     baseline_total_mpg = sum(p.mpg for p in team_players)
     if baseline_total_mpg <= 0:
@@ -247,14 +284,17 @@ def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0) -> flo
     else:
         season_start_year = season_start_year_for_offset(offset)
         weighted = sum(
-            p.dpm * p.mpg * p.presence(offset) * contract_continuity(p.name, season_start_year)
+            _dpm_for_offset(p, offset, projection_ctx) * p.mpg * p.presence(offset)
+            * contract_continuity(p.name, season_start_year)
             for p in team_players
         )
     return weighted / baseline_total_mpg
 
 
-def all_teams_net_ratings(players: Sequence[DarkoPlayer], offset: int = 0) -> Dict[str, float]:
-    return {team: team_net_rating(team_players, offset) for team, team_players in _group_by_team(players).items()}
+def all_teams_net_ratings(players: Sequence[DarkoPlayer], offset: int = 0,
+                           projection_ctx: Optional[ProjectionContext] = None) -> Dict[str, float]:
+    return {team: team_net_rating(team_players, offset, projection_ctx)
+            for team, team_players in _group_by_team(players).items()}
 
 
 def fit_darko_to_elo(darko_ratings: Dict[str, float], market_elo: Dict[str, float]) -> Tuple[float, float, float]:
@@ -282,15 +322,20 @@ def darko_elo(darko_rating: float, slope: float, intercept: float) -> float:
 
 
 def future_year_teams(players: Sequence[DarkoPlayer], offset: int, slope: float, intercept: float,
-                       conferences: Dict[str, str]) -> List[Team]:
+                       conferences: Dict[str, str],
+                       projection_ctx: Optional[ProjectionContext] = None) -> List[Team]:
     """
     Team list for `offset` years from now (1..MAX_OFFSET), using this
     module's DARKO+longevity-evolved net rating run through the SAME
     market-fitted slope/intercept from fit_darko_to_elo().
+
+    projection_ctx: see team_net_rating -- when given, re-projects each
+    player's DPM for this specific offset instead of holding one fixed
+    value flat across every future year.
     """
     if not (1 <= offset <= MAX_OFFSET):
         raise ValueError(f"offset must be 1-{MAX_OFFSET} (near-term window only, see module docstring)")
-    ratings = all_teams_net_ratings(players, offset=offset)
+    ratings = all_teams_net_ratings(players, offset=offset, projection_ctx=projection_ctx)
     missing_conf = set(ratings) - set(conferences)
     if missing_conf:
         raise KeyError(f"No conference assignment for: {sorted(missing_conf)}")

@@ -637,15 +637,32 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
     conspicuous jump between that team's 2027 pick grade (real market data)
     and its 2028+ grades (the lower DARKO-implied number). Worth a manual
     sanity check for any team whose grades jump sharply at that boundary.
-  - Players who stay on the roster are scored at one FIXED skill value for
-    every future year, only presence (the longevity decay) varies by year.
-    That fixed value is now `player_value_regression.py`'s regression-
-    projected next-season DPM where available (404/530 players -- an
-    age/trend-aware one-step-ahead projection, not the raw prior-season
-    snapshot), but it's still only projected ONE season forward and then
-    held flat through 2028-2032 -- there's no re-projection that ages a
-    player further for each additional year out, so a player already in
-    decline is under-penalized by 2032 relative to 2028.
+  - **Players who stay on the roster are now re-projected per future year,
+    not held at one fixed skill value.** `player_value_regression.py`'s
+    `project_season(years_ahead=k)` generalizes its original one-step-ahead
+    projection to any horizon; `darko_ratings.py`'s `team_net_rating` /
+    `all_teams_net_ratings` / `future_year_teams` take an optional
+    `projection_ctx` and, when given one (both `run_real_league.py` and
+    `sequential_league_sim.py` now do), score each of the 404/530 covered
+    players at THAT offset's own re-projected DPM instead of reusing the
+    2028 projection through 2032. This is still a bounded fix, not a full
+    forecast: only the age/age^2 features advance per extra year (the
+    model's own fitted rise-then-decline age curve); `most_recent_composite`
+    and `trend` stay anchored to the player's last real observed data,
+    since there's no real stat line to recompute them from further out and
+    extrapolating a slope fit from as few as 2-3 seasons multiple years
+    into the future would compound noise rather than add signal (see
+    `project_season`'s docstring). On the real fitted model, this curve's
+    effective peak lands quite young (~19) over the 318-row real training
+    set, so nearly the entire actual player pool (ages 21-41) is already
+    past it -- meaning the fix mostly shows up as ADDITIONAL decline by
+    2032 versus the old flat-hold behavior (e.g. -59 Elo for the Knicks at
+    offset 5 in one check, vs. roughly flat for young rosters), not a mix
+    of some teams up and some down. That's the honestly-reported shape of
+    this particular fit, not a forced assumption -- re-check it if the
+    underlying multi-year stats CSV changes. The 126/530 players without
+    enough multi-year history still fall back to their flat raw
+    current-season DPM at every offset, unchanged.
   - 2027 and 2033 aren't touched by this model: 2027 uses
     `market_ratings.py`'s real 2026-27 market ratings directly (the best
     signal available for the season that's actually about to happen), and

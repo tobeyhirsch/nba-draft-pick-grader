@@ -58,7 +58,7 @@ from darko_ratings import (
     all_teams_net_ratings, fit_darko_to_elo,
     future_year_teams, MAX_OFFSET, FIRST_DRAFT_YEAR_COVERED,
 )
-from player_value_regression import load_darko_players_with_projection
+from player_value_regression import load_darko_players_with_projection, load_projection_context
 
 # Checks several common data/ locations relative to THIS file (see
 # data_paths.py) rather than assuming one fixed layout -- works whether
@@ -108,7 +108,12 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
     set and that player has enough historical seasons, otherwise the same
     raw current-season DPM darko_ratings.load_darko_players() always used
     (see player_value_regression.py; MULTI_YEAR_STATS_CSV is None by
-    default, so this is a no-op today).
+    default, so this is a no-op today). When MULTI_YEAR_STATS_CSV is set,
+    each of the 2028-2032 years ALSO gets its own re-projected DPM per
+    player (via load_projection_context()/darko_ratings.py's
+    projection_ctx) instead of every year reusing the same fixed
+    next-season projection -- see darko_ratings.py's "WHAT ELSE THIS DOES
+    NOT MODEL" docstring section.
     """
     players = load_darko_players_with_projection(MULTI_YEAR_STATS_CSV)
     darko_now = all_teams_net_ratings(players, offset=0)
@@ -117,9 +122,11 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
     print(f"  DARKO-to-Elo fit vs. current market ratings: r^2={r2:.3f} "
           f"(slope={slope:.2f}, intercept={intercept:.1f}) -- see darko_ratings.py to inspect further")
 
+    projection_ctx = load_projection_context(MULTI_YEAR_STATS_CSV) if MULTI_YEAR_STATS_CSV else None
+
     conferences = {t.name: t.conference for t in base_teams}
     return {
-        FIRST_DRAFT_YEAR_COVERED + offset - 1: future_year_teams(players, offset, slope, intercept, conferences)
+        FIRST_DRAFT_YEAR_COVERED + offset - 1: future_year_teams(players, offset, slope, intercept, conferences, projection_ctx)
         for offset in range(1, MAX_OFFSET + 1)
     }
 
