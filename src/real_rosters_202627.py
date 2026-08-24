@@ -1,9 +1,9 @@
 """
-Real 2026-27 roster depth charts for all 30 teams -- user-supplied,
-authoritative for roster MEMBERSHIP (who plays where). Does NOT include
-salary or performance data; see cap_sheet_data.py for salary (partial,
-being filled in) and team_wins.py for how performance projections plug in
-once real per-player DARKO/EPM data is available.
+Real 2026-27 roster depth charts for all 30 teams -- authoritative for
+roster MEMBERSHIP (who plays where). Does NOT include salary or performance
+data; see cap_sheet_data.py for salary (partial, being filled in) and
+team_wins.py for how performance projections plug in once real per-player
+DARKO/EPM data is available.
 
 WHY THIS FILE EXISTS: multiple scraped sources (nbacaptracker.com,
 Spotrac) were found to have real errors in which players they attribute to
@@ -15,6 +15,22 @@ are on Minnesota, Bridges is on Phoenix). This file is the ground truth for
 "who is actually on this team right now" that other modules' player lists
 should be checked against before being trusted.
 
+LIVE SOURCE: kept in sync with ldsport.com's depth-charts page. Refreshes
+are done in small (~3-team) batches with an explicit verbatim/no-omission
+instruction, because larger batches were empirically found to drop or
+misattribute players (confirmed by cross-checking against this file before
+overwriting anything -- e.g. an early large-batch refresh attempt dropped
+LeBron James from every roster and misassigned Johni Broome to the wrong
+team; a smaller-batch retry reproduced both correctly). Every refresh is
+diffed against the current contents of this dict and changes are reviewed
+before being applied -- this file is never silently overwritten.
+Last synced: 2026-08-23 (see ldsport_refresh_depth_charts_v2.py for the
+raw fetch this sync was built from). That refresh found the roster
+unchanged except for one addition: Felix Okpara (R) added to the Washington
+Wizards center rotation, which also resolves the previous placeholder note
+about Washington's center row having been cut off mid-transcription --
+"Tristan Vukcevic" is now independently confirmed correct.
+
 Format: {team_name: {position: [player_name, ...]}}. Position strings match
 the depth chart's own grouping (PG/SG/SF/PF/C) -- these are DEPTH CHART
 listing order (starter first), not a guarantee of exact playing time
@@ -25,12 +41,6 @@ splits. Player name strings keep the source's inline annotations (e.g.
 stripping them, since that annotation is informative and this is a direct
 transcription, not a cleaned dataset -- callers that need bare names should
 strip parenthetical/trailing-marker suffixes themselves.
-
-NOTE: Washington Wizards' center row was cut off mid-transcription in the
-source message (ends at "Tristan Vukcevi..."). Reconstructed as "Tristan
-Vukcevic" based on the visible prefix and his presence in Washington's cap
-sheet data already gathered independently -- flagged here rather than
-silently completed, in case that reconstruction is wrong.
 """
 
 from typing import Dict, List
@@ -153,7 +163,7 @@ TEAM_DEPTH_CHARTS: Dict[str, Dict[str, List[str]]] = {
         "SG": ["Tyler Herro", "Gary Trent Jr.", "Kasparas Jakucionis", "Cormac Ryan**"],
         "SF": ["Jaime Jaquez Jr.", "AJ Green", "Caris LeVert"],
         "PF": ["Kyle Kuzma", "Nate Ament (R)", "Ousmane Dieng", "Pete Nance", "Bogoljub Markovic (R)"],
-        "C": ["Myles Turner", "Kel'el Ware", "Jericho Sims", "Rafael Castro (R)"],
+        "C": ["Myles Turner", "Kel'el Ware", "Jericho Sims", "Rafael Castro (R)**"],
     },
     "Minnesota Timberwolves": {
         "PG": ["Ayo Dosunmu", "Bones Hyland", "Zyon Pullin**"],
@@ -244,7 +254,7 @@ TEAM_DEPTH_CHARTS: Dict[str, Dict[str, List[str]]] = {
         "SG": ["Kyshawn George", "Tre Johnson", "Jamir Watkins** (+)"],
         "SF": ["AJ Dybantsa (R)", "Khris Middleton", "Will Riley", "Cam Whitmore"],
         "PF": ["Anthony Davis", "Bilal Coulibaly", "Justin Champagnie", "Julian Reese (R)**"],
-        "C": ["Alex Sarr", "Deandre Ayton", "Tristan Vukcevic"],  # NOTE: source text cut off after "Tristan Vukcevi..." -- reconstructed, see module docstring
+        "C": ["Alex Sarr", "Deandre Ayton", "Tristan Vukcevic", "Felix Okpara (R)**"],
     },
 }
 

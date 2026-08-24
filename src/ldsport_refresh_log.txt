@@ -1,0 +1,17 @@
+=== 2026-08-23 ===
+rosters: 2 change(s)
+  ~ Milwaukee Bucks C: ['Myles Turner', "Kel'el Ware", 'Jericho Sims', 'Rafael Castro (R)'] -> ['Myles Turner', "Kel'el Ware", 'Jericho Sims', 'Rafael Castro (R)**']
+  ~ Washington Wizards C: ['Alex Sarr', 'Deandre Ayton', 'Tristan Vukcevic', 'Felix Okpara (R)'] -> ['Alex Sarr', 'Deandre Ayton', 'Tristan Vukcevic', 'Felix Okpara (R)**']
+picks: 2 change(s)
+  ~ Portland Trail Blazers 2027: 'POR 1st, MIN 2nd, NO/POR (Less Favorable) 2nd (#31-55)' -> 'POR 1st, MIN 2nd, NO/POR (Less Favorable) 2nd (If #31-55)'
+  ~ Utah Jazz 2029: 'CLE/MIN (If #6-30)/UTA (Most Favorable) 1st, CLE/MIN (If #6-30)/UTA (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd' -> 'CLE /MIN (If #6-30)/UTA (Most Favorable) 1st, CLE/MIN (#If #6-30)/UTA (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd'
+(dry run, no files written)
+
+=== 2026-08-23 ===
+rosters: 2 change(s)
+  ~ Milwaukee Bucks C: ['Myles Turner', "Kel'el Ware", 'Jericho Sims', 'Rafael Castro (R)'] -> ['Myles Turner', "Kel'el Ware", 'Jericho Sims', 'Rafael Castro (R)**']
+  ~ Washington Wizards C: ['Alex Sarr', 'Deandre Ayton', 'Tristan Vukcevic', 'Felix Okpara (R)'] -> ['Alex Sarr', 'Deandre Ayton', 'Tristan Vukcevic', 'Felix Okpara (R)**']
+picks: 2 change(s)
+  ~ Portland Trail Blazers 2027: 'POR 1st, MIN 2nd, NO/POR (Less Favorable) 2nd (#31-55)' -> 'POR 1st, MIN 2nd, NO/POR (Less Favorable) 2nd (If #31-55)'
+  ~ Utah Jazz 2029: 'CLE/MIN (If #6-30)/UTA (Most Favorable) 1st, CLE/MIN (If #6-30)/UTA (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd' -> 'CLE /MIN (If #6-30)/UTA (Most Favorable) 1st, CLE/MIN (#If #6-30)/UTA (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd'
+

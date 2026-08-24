@@ -78,11 +78,12 @@ QUALIFIER_RANK: Dict[str, int] = {
     "Least Favorable": -1,
 }
 
-# Matches: TEAM1/TEAM2[/TEAM3[/TEAM4]] (Qualifier) ROUND [(If #LO-HI)]
+# Matches: TEAM1/TEAM2[/TEAM3[/TEAM4[/TEAM5]]] (Qualifier) ROUND [(If #LO-HI)]
 # e.g. "MIL/NO (Less Favorable) 1st (If #5-30)"
 #      "DAL/HOU/PHX (Least Favorable) 1st"
+#      "HOU/IND/MIA/OKC/SA (Least Favorable) 2nd"
 FLAT_SWAP_RE = re.compile(
-    r"^([A-Z]{2,3}(?:/[A-Z]{2,3}){1,3})"      # 2-4 team codes, slash-separated
+    r"^([A-Z]{2,3}(?:/[A-Z]{2,3}){1,4})"      # 2-5 team codes, slash-separated
     r"\s*\(([^)]+)\)"                          # qualifier text in parens
     r"\s*(1st|2nd)"                            # round
     r"(?:\s*\(If\s*#(\d+)-(\d+)\))?"           # optional trailing protection range
@@ -97,6 +98,46 @@ BARE_QUALIFIER_RE = re.compile(r"^\([^)]+\)\s*(1st|2nd)\s*$")
 
 # A parenthetical range with no "If" -- ambiguous, not clearly a condition.
 BARE_RANGE_NO_IF_RE = re.compile(r"\(#\d+-\d+\)")
+
+# A single team's future pick with a BARE numeric protection range, no "If"
+# text: "GS 2nd (#31-50)". Distinct from SIMPLE_PROTECTED_RE (which requires
+# "If") -- only fired for edge-anchored ranges (see
+# invert_conveys_range_to_protection), which is the same safety net that
+# already governs whether this ever actually resolves to something. Applied
+# broadly rather than to specific teams because the edge-anchoring check
+# itself is the guard against false positives: a genuinely ambiguous
+# "informational" range (sandwiched, not touching either boundary of the
+# round) still safely falls through to AMBIGUOUS_ANNOTATION unresolved,
+# unchanged. Confirmed against real data: Golden State's 2032 "GS 2nd
+# (#31-50)" and Memphis's 2032 "GS 2nd (#51-60)" are the two halves of the
+# SAME pick (round 2's full range is 31-60, and the two stated ranges
+# partition it exactly at the 50/51 boundary with no gap or overlap) --
+# strong evidence these are real conditions, just formatted without "If".
+BARE_RANGE_PROTECTED_RE = re.compile(
+    r"^([A-Z]{2,3})\s+(1st|2nd)\s*\(#(\d+)-(\d+)\)$"
+)
+
+# Same-year, single-team "cross-pick conditional": TEAM's pick only exists
+# (conveys) if a DIFFERENT (or the same) team's SAME-YEAR pick lands in a
+# stated range, e.g. "CHA 2nd (If 2027 SA 1st is #1-16)" or "PHI 2nd (If
+# 2028 PHI 1st is #1-8)". Optionally combined with TEAM's own protection
+# range on top (checked only within the "conveys" branch), e.g. "BOS 2nd
+# (If #31-45) (If 2028 BOS 1st is #2-30)". RESOLVABLE when cond_year equals
+# the fragment's own draft year (both picks come from the exact same
+# simulated season, so draft_pipeline_321.joint_pick_number_trials already
+# correlates them) -- see pick_resolver.py's conditional-pick tier. A
+# DIFFERENT year (e.g. "MIA 1st (If 2027 MIA 1st is #15-30)" appearing
+# under a team's 2028 entry) still matches this regex syntactically but is
+# NOT resolved (the caller checks cond_year == year and leaves cross-year
+# matches to fall through to classify_unresolved_reason unchanged) -- that
+# needs multiple draft years correlated within the same trial, which this
+# pipeline's per-year-independent-trials design doesn't support.
+CROSS_PICK_SAME_YEAR_RE = re.compile(
+    r"^([A-Z]{2,3})\s+(1st|2nd)"
+    r"(?:\s*\(If\s*#(\d+)-(\d+)\))?"                                          # optional own protection range
+    r"\s*\(If\s*(\d{4})\s+([A-Z]{2,3})\s+(1st|2nd)\s+is\s*#(\d+)(?:-(\d+))?\)"  # cross-pick condition (range or single pick)
+    r"\s*$"
+)
 
 # A protection/condition that names a specific year, i.e. depends on a
 # different pick's resolved outcome rather than a static numeric range.
@@ -156,6 +197,24 @@ class SwapPick:
     rank: int                                  # 1 = best of the group, len(teams) = worst
     round_str: str                             # "1st" or "2nd"
     protection_range: Optional[Tuple[int, int]] = None
+    raw_text: str = ""
+
+
+@dataclass
+class ConditionalPick:
+    """A same-year, single-team cross-pick conditional -- see
+    CROSS_PICK_SAME_YEAR_RE's docstring. `team_code`'s pick conveys only in
+    trials where `cond_team_code`'s `cond_round_str` pick that same year
+    lands in [cond_lo, cond_hi]; `own_protection_range`, if set, is an
+    ADDITIONAL ordinary protection on team_code's own pick number, checked
+    only within the "it conveyed" branch."""
+    year: int
+    team_code: str
+    round_str: str
+    cond_team_code: str
+    cond_round_str: str
+    cond_range: Tuple[int, int]
+    own_protection_range: Optional[Tuple[int, int]] = None
     raw_text: str = ""
 
 
@@ -261,6 +320,402 @@ def swap_to_pick_asset(swap: SwapPick, joint_trials: Dict[str, List[int]],
     )
     label = (f"{swap.year} {'/'.join(swap.teams)} {swap.round_str} "
              f"({qualifier_desc}, swap-resolved)")
+    years_away = max(0, swap.year - current_year)
+    return PickAsset(
+        label=label,
+        pick_probabilities=dist,
+        protection_range=swap.protection_range,
+        fallback_value=fallback_value,
+        years_away=years_away,
+    )
+
+
+def parse_conditional_pick_fragment(year: int, fragment: str) -> Optional[ConditionalPick]:
+    """
+    Attempts to parse a same-year, single-team cross-pick conditional (see
+    CROSS_PICK_SAME_YEAR_RE and ConditionalPick's docstrings). Returns None
+    if the fragment doesn't match that shape AT ALL, OR if it matches but
+    the condition's year differs from `year` (a genuine cross-year
+    conditional -- caller should fall back to classify_unresolved_reason,
+    which still correctly labels it CROSS_PICK_CONDITIONAL either way).
+    """
+    m = CROSS_PICK_SAME_YEAR_RE.match(fragment.strip())
+    if not m:
+        return None
+
+    team_code, round_str, own_lo, own_hi, cond_year, cond_team, cond_round, cond_lo, cond_hi = m.groups()
+    if int(cond_year) != year:
+        return None  # cross-year -- not resolvable here, leave to the caller's normal fallback
+    if cond_hi is None:
+        cond_hi = cond_lo  # "is #1" (single pick number) rather than "is #A-B" (a range)
+
+    own_protection = None
+    if own_lo and own_hi:
+        stated_range = (int(own_lo), int(own_hi))
+        own_protection = invert_conveys_range_to_protection(round_str, stated_range)
+        if own_protection is None and stated_range != FULL_RANGE_BY_ROUND[round_str]:
+            return None  # stated but not safely invertible -- don't guess
+
+    return ConditionalPick(
+        year=year, team_code=team_code, round_str=round_str,
+        cond_team_code=cond_team, cond_round_str=cond_round,
+        cond_range=(int(cond_lo), int(cond_hi)),
+        own_protection_range=own_protection, raw_text=fragment,
+    )
+
+
+def resolve_conditional_pick(cond: ConditionalPick, joint_trials: Dict[str, Dict[str, List[int]]]
+                              ) -> Tuple[Dict[int, float], float]:
+    """
+    joint_trials: {team_code: {"1st": [...], "2nd": [...]}} for EXACTLY
+    cond.team_code and cond.cond_team_code, from the SAME correlated batch
+    (both picks must come from the same simulated season for the
+    conditioning to mean anything).
+
+    Returns (conditioned_distribution, convey_probability):
+      conditioned_distribution: {pick_number: probability}, normalized over
+        ONLY the trials where the condition held (i.e. sums to 1) -- pass
+        as PickAsset.pick_probabilities.
+      convey_probability: fraction of all trials where the condition held
+        -- pass as PickAsset.convey_probability.
+    """
+    cond_values = joint_trials[cond.cond_team_code][cond.cond_round_str]
+    target_values = joint_trials[cond.team_code][cond.round_str]
+    n_trials = len(cond_values)
+    if len(target_values) != n_trials:
+        raise ValueError("joint_trials lists must all be the same length (same trial batch)")
+    if n_trials == 0:
+        raise ValueError("joint_trials has zero trials")
+
+    lo, hi = cond.cond_range
+    counts: Dict[int, int] = {}
+    convey_count = 0
+    for i in range(n_trials):
+        if lo <= cond_values[i] <= hi:
+            convey_count += 1
+            counts[target_values[i]] = counts.get(target_values[i], 0) + 1
+
+    convey_probability = convey_count / n_trials
+    if convey_count == 0:
+        return {}, 0.0
+    dist = {pick: count / convey_count for pick, count in counts.items()}
+    return dist, convey_probability
+
+
+def conditional_pick_to_asset(cond: ConditionalPick, joint_trials: Dict[str, Dict[str, List[int]]],
+                               current_year: int = 2026, fallback_value: float = 0.0) -> PickAsset:
+    """Resolves a ConditionalPick against a joint-trial batch and wraps the
+    result as a gradable PickAsset."""
+    dist, convey_probability = resolve_conditional_pick(cond, joint_trials)
+    protection_note = f", own protection {cond.own_protection_range}" if cond.own_protection_range else ""
+    label = (f"{cond.year} {cond.team_code} {cond.round_str} (conveys only if {cond.cond_team_code} "
+             f"{cond.cond_round_str} is #{cond.cond_range[0]}-{cond.cond_range[1]}{protection_note}, "
+             f"conditional-resolved)")
+    years_away = max(0, cond.year - current_year)
+    if convey_probability == 0.0:
+        return PickAsset(label=label, pick_probabilities={0: 1.0}, convey_probability=0.0,
+                          fallback_value=fallback_value, years_away=years_away)
+    return PickAsset(
+        label=label,
+        pick_probabilities=dist,
+        protection_range=cond.own_protection_range,
+        convey_probability=convey_probability,
+        fallback_value=fallback_value,
+        years_away=years_away,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Nested swaps: "TEAM1/(TEAM2/TEAM3 (Qualifier)) (Qualifier) ROUND" -- a
+# 2-level generalization of the flat swap above, where one (or more) of the
+# outer group's members is itself a parenthesized flat-swap sub-group
+# instead of a bare team code, e.g. "ATL/(CLE/UTA (Less Favorable)) (More
+# Favorable) 1st" (the 2028 Atlanta Hawks pick: compare ATL's own pick
+# against "the less favorable of CLE/UTA", take the more favorable of
+# those two).
+#
+# DELIBERATELY NOT SUPPORTED: any member carrying its own inline range
+# condition (e.g. "DEN (If #6-30)/LAC/OKC (Most Favorable) 1st" -- Denver
+# only joins the pool if its own pick is #6-30). Real-world trade language
+# uses that same surface syntax for at least two DIFFERENT underlying
+# mechanics -- sometimes "the pool shrinks to whoever's left" (the other
+# members still swap among themselves), sometimes "the whole fragment
+# doesn't convey at all if the condition fails" (a separate, differently
+# shaped asset elsewhere covers that case instead) -- and the raw text
+# alone doesn't say which. Guessing between those two would risk exactly
+# the "plausible-looking but wrong number" this module's docstring warns
+# against, so fragments with an inline per-member condition are left
+# unresolved (still classified NESTED_OR_ELLIPTICAL) rather than guessed
+# at. parse_nested_swap_fragment returns None for any such fragment.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TeamLeaf:
+    code: str
+
+
+@dataclass
+class SwapGroup:
+    members: List[object]      # TeamLeaf | SwapGroup
+    qualifier: str
+
+
+@dataclass
+class NestedSwap:
+    year: int
+    root: SwapGroup
+    round_str: str
+    protection_range: Optional[Tuple[int, int]] = None
+    raw_text: str = ""
+
+
+# The full fragment, minus its member-list prefix: an optional protection
+# clause, the mandatory qualifier clause, the round, and an optional
+# trailing protection clause -- in EITHER order (both orderings are
+# observed in real data, e.g. "ATL/HOU (If #31-55) (More Favorable) 2nd"
+# puts protection first, "MIL/NO (Less Favorable) 1st (If #5-30)" puts it
+# last). Non-greedy `members` lets backtracking find the correct split even
+# when the member-list itself contains parens (a nested sub-group).
+NESTED_SWAP_SUFFIX_RE = re.compile(
+    r"^(?P<members>.+?)"
+    r"(?:\s*\(If\s*#(?P<plo1>\d+)-(?P<phi1>\d+)\))?"
+    r"\s*\((?P<qualifier>[^)]+)\)"
+    r"\s*(?P<round>1st|2nd)"
+    r"(?:\s*\(If\s*#(?P<plo2>\d+)-(?P<phi2>\d+)\))?"
+    r"\s*$"
+)
+
+_BARE_TEAM_CODE_RE = re.compile(r"^[A-Z]{2,3}$")
+_INNER_GROUP_RE = re.compile(r"^\((?P<sub>.+?)\s*\((?P<q>[^)]+)\)\)$")
+
+
+def _split_top_level_slash(s: str) -> List[str]:
+    """Splits a member-list string on '/' at paren-depth 0 only."""
+    parts = []
+    depth = 0
+    current = ""
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "/" and depth == 0:
+            parts.append(current)
+            current = ""
+        else:
+            current += ch
+    parts.append(current)
+    return [p for p in parts]
+
+
+def _parse_member(token: str):
+    """Parses one member-list token into a TeamLeaf or SwapGroup. Returns
+    None if the token is anything this conservative parser doesn't
+    recognize (a bare team code, or a fully-parenthesized nested group with
+    its own trailing qualifier) -- notably, a team code carrying its own
+    inline condition is REJECTED (returns None), not guessed at (see the
+    module note above)."""
+    token = token.strip()
+    if _BARE_TEAM_CODE_RE.match(token):
+        return TeamLeaf(token)
+
+    m = _INNER_GROUP_RE.match(token)
+    if m:
+        qualifier = m.group("q")
+        if qualifier not in QUALIFIER_RANK:
+            return None
+        sub_tokens = _split_top_level_slash(m.group("sub"))
+        sub_nodes = [_parse_member(t) for t in sub_tokens]
+        if any(n is None for n in sub_nodes) or len(sub_nodes) < 2:
+            return None
+        return SwapGroup(sub_nodes, qualifier)
+
+    return None  # anything else (inline condition, malformed, etc.) -- don't guess
+
+
+def _split_top_level_commas(description: str) -> List[str]:
+    """Local copy of pick_resolver._split_top_level, duplicated here (not
+    imported) to avoid a circular import -- pick_resolver imports this
+    module at load time."""
+    parts = []
+    depth = 0
+    current = ""
+    for ch in description:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    if current.strip():
+        parts.append(current.strip())
+    return parts
+
+
+_CONFIRMED_TRAILING_PROTECTIONS_CACHE = None
+
+
+def _confirmed_trailing_swap_protections() -> "set":
+    """
+    Scans EVERY fragment in draft_picks_data.TEAM_FUTURE_PICKS for flat
+    swaps using the STANDARD, unambiguous "TEAMLIST (Qualifier) ROUND (If
+    #LO-HI)" order -- protection AFTER the qualifier, the same convention
+    used everywhere else a protection range appears in this dataset.
+    Returns {(frozenset(teams), round_str, (lo, hi))}.
+
+    WHY THIS EXISTS: parse_nested_swap_fragment also accepts the REORDERED
+    "TEAMLIST (If #LO-HI) (Qualifier) ROUND" variant (protection BEFORE the
+    qualifier), because that's confirmed safe in at least one real case --
+    Atlanta's 2031 "ATL/HOU (If #31-55) (More Favorable) 2nd" is confirmed
+    by Houston's OWN 2031 fragment, "ATL/HOU (Less Favorable) 2nd (If
+    #31-55)", using the unambiguous trailing order for the SAME team
+    pair/round/range. But that reordering is syntactically indistinguishable
+    from a DIFFERENT, ambiguous pattern: a range gating one specific named
+    team's OWN pick (not the swap result) -- e.g. Memphis's 2029 "MEM/ORL
+    (If #3-30) (More Favorable) 1st", which Orlando's own complementary
+    fragment ("ORL 1st (If #1-2) / MEM/ORL (If #3-30) (Less Favorable)
+    1st") strongly suggests is really "ORL's OWN pick, if #3-30" (partitions
+    ORL's full 1-30 range against the #1-2 alternative), not a swap-result
+    protection. Without a second, differently-ordered sibling fragment
+    confirming the swap-result reading, accepting the reordered form would
+    risk exactly the "plausible-looking but wrong number" this module's
+    docstring warns against -- so parse_nested_swap_fragment only accepts a
+    reordered (leading) protection when this function confirms it.
+    """
+    global _CONFIRMED_TRAILING_PROTECTIONS_CACHE
+    if _CONFIRMED_TRAILING_PROTECTIONS_CACHE is not None:
+        return _CONFIRMED_TRAILING_PROTECTIONS_CACHE
+
+    from draft_picks_data import TEAM_FUTURE_PICKS
+    confirmed = set()
+    for _, picks in TEAM_FUTURE_PICKS.items():
+        for _, description in picks.items():
+            if description.strip() == "(NO PICKS)":
+                continue
+            for fragment in _split_top_level_commas(description):
+                m = FLAT_SWAP_RE.match(fragment.strip())
+                if not m:
+                    continue
+                team_str, qualifier, round_str, lo, hi = m.groups()
+                if qualifier not in QUALIFIER_RANK or not (lo and hi):
+                    continue
+                confirmed.add((frozenset(team_str.split("/")), round_str, (int(lo), int(hi))))
+    _CONFIRMED_TRAILING_PROTECTIONS_CACHE = confirmed
+    return confirmed
+
+
+def parse_nested_swap_fragment(year: int, fragment: str) -> Optional[NestedSwap]:
+    """
+    Attempts to parse a 2-level nested swap (see module note above). Returns
+    None if the fragment isn't this shape, or contains anything this
+    conservative parser doesn't recognize (an inline per-member condition,
+    a 3+-level nesting, malformed parens, an unconfirmed reordered
+    protection, etc.) -- caller falls back to classify_unresolved_reason()
+    as before.
+    """
+    fragment = fragment.strip()
+    m = NESTED_SWAP_SUFFIX_RE.match(fragment)
+    if not m:
+        return None
+
+    qualifier = m.group("qualifier")
+    if qualifier not in QUALIFIER_RANK:
+        return None
+    round_str = m.group("round")
+
+    member_tokens = _split_top_level_slash(m.group("members"))
+    if len(member_tokens) < 2:
+        return None
+    members = [_parse_member(t) for t in member_tokens]
+    if any(n is None for n in members):
+        return None
+
+    lo1, hi1, lo2, hi2 = m.group("plo1"), m.group("phi1"), m.group("plo2"), m.group("phi2")
+    if lo1 and hi1 and lo2 and hi2:
+        return None  # two protection clauses on one fragment -- not a shape we expect, don't guess
+    if lo1 and hi1:
+        # Leading (reordered) protection -- only accept if a differently-
+        # ordered sibling fragment elsewhere confirms this is really a
+        # swap-result protection, not a per-team gate (see
+        # _confirmed_trailing_swap_protections' docstring).
+        leaf_teams = frozenset(collect_nested_swap_teams(SwapGroup(members, qualifier)))
+        if (leaf_teams, round_str, (int(lo1), int(hi1))) not in _confirmed_trailing_swap_protections():
+            return None
+    lo, hi = (lo1, hi1) if (lo1 and hi1) else (lo2, hi2)
+    protection = None
+    if lo and hi:
+        stated_range = (int(lo), int(hi))
+        protection = invert_conveys_range_to_protection(round_str, stated_range)
+        if protection is None and stated_range != FULL_RANGE_BY_ROUND[round_str]:
+            return None
+
+    return NestedSwap(year=year, root=SwapGroup(members, qualifier), round_str=round_str,
+                       protection_range=protection, raw_text=fragment)
+
+
+def collect_nested_swap_teams(node) -> "set[str]":
+    """All leaf team codes referenced anywhere in a SwapGroup/TeamLeaf tree."""
+    if isinstance(node, TeamLeaf):
+        return {node.code}
+    teams: "set[str]" = set()
+    for m in node.members:
+        teams |= collect_nested_swap_teams(m)
+    return teams
+
+
+def _eval_nested_swap_node(node, round_str: str, joint_trials: Dict[str, Dict[str, List[int]]], i: int) -> int:
+    if isinstance(node, TeamLeaf):
+        return joint_trials[node.code][round_str][i]
+    values = sorted(_eval_nested_swap_node(m, round_str, joint_trials, i) for m in node.members)
+    rank = QUALIFIER_RANK[node.qualifier]
+    if rank == -1:
+        rank = len(values)  # "Less/Least Favorable" = worst of this group
+    return values[rank - 1]
+
+
+def resolve_nested_swap_distribution(swap: NestedSwap, joint_trials: Dict[str, Dict[str, List[int]]]
+                                      ) -> Dict[int, float]:
+    """Same idea as resolve_swap_distribution, but evaluates the (possibly
+    nested) tree per trial instead of a flat team list. joint_trials:
+    {team_code: {"1st": [...], "2nd": [...]}} for every leaf team code in
+    swap.root (see collect_nested_swap_teams), from the SAME correlated
+    batch."""
+    needed = collect_nested_swap_teams(swap.root)
+    missing = [t for t in needed if t not in joint_trials]
+    if missing:
+        raise KeyError(f"joint_trials missing required teams: {missing}")
+
+    n_trials = len(joint_trials[next(iter(needed))][swap.round_str])
+    for t in needed:
+        if len(joint_trials[t][swap.round_str]) != n_trials:
+            raise ValueError("joint_trials lists must all be the same length (same trial batch)")
+    if n_trials == 0:
+        raise ValueError("joint_trials has zero trials")
+
+    counts: Dict[int, int] = {}
+    for i in range(n_trials):
+        resolved = _eval_nested_swap_node(swap.root, swap.round_str, joint_trials, i)
+        counts[resolved] = counts.get(resolved, 0) + 1
+    return {pick: count / n_trials for pick, count in counts.items()}
+
+
+def _describe_nested_swap_node(node) -> str:
+    if isinstance(node, TeamLeaf):
+        return node.code
+    inner = "/".join(_describe_nested_swap_node(m) for m in node.members)
+    return f"({inner} {node.qualifier})"
+
+
+def nested_swap_to_pick_asset(swap: NestedSwap, joint_trials: Dict[str, Dict[str, List[int]]],
+                               current_year: int = 2026, fallback_value: float = 0.0) -> PickAsset:
+    """Resolves a NestedSwap against a joint-trial batch and wraps the
+    result as a gradable PickAsset."""
+    dist = resolve_nested_swap_distribution(swap, joint_trials)
+    desc = "/".join(_describe_nested_swap_node(m) for m in swap.root.members)
+    label = f"{swap.year} {desc} ({swap.root.qualifier}) {swap.round_str} (nested swap-resolved)"
     years_away = max(0, swap.year - current_year)
     return PickAsset(
         label=label,

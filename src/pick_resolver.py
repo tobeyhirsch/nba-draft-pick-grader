@@ -40,9 +40,17 @@ from draft_picks_data import TEAM_FUTURE_PICKS
 from pick_grading import PickAsset
 from team_codes import TEAM_ABBREV_TO_NAME
 from swap_resolver import (
+    BARE_RANGE_PROTECTED_RE,
+    ConditionalPick,
+    NestedSwap,
     SwapPick,
     classify_unresolved_reason,
+    collect_nested_swap_teams,
+    conditional_pick_to_asset,
     invert_conveys_range_to_protection,
+    nested_swap_to_pick_asset,
+    parse_conditional_pick_fragment,
+    parse_nested_swap_fragment,
     parse_swap_fragment,
     swap_to_pick_asset,
 )
@@ -84,21 +92,29 @@ def _split_top_level(description: str) -> List[str]:
     return parts
 
 
-def classify_team_picks(team_name: str) -> Tuple[List[SimplePick], List[SwapPick], List[UnresolvedEntry]]:
+def classify_team_picks(team_name: str) -> Tuple[List[SimplePick], List[SwapPick], List[ConditionalPick],
+                                                  List[NestedSwap], List[UnresolvedEntry]]:
     """
-    Returns (simple_picks, swap_picks, unresolved):
+    Returns (simple_picks, swap_picks, conditional_picks, nested_swaps, unresolved):
       simple_picks: single-team picks (known slot, bare future pick, or
         future pick with only a numeric protection range) -- see SimplePick.
       swap_picks: flat N-way swap comparisons, parsed but NOT yet resolved
         to a distribution -- resolving needs a real league, done in
         build_pick_assets().
-      unresolved: anything that doesn't fit either tier, with a reason.
+      conditional_picks: same-year, single-team cross-pick conditionals
+        (see swap_resolver.ConditionalPick) -- also need a real league.
+      nested_swaps: 2-level nested swap comparisons (see
+        swap_resolver.NestedSwap) -- also need a real league.
+      unresolved: anything that doesn't fit any of the above tiers, with a
+        reason.
     """
     if team_name not in TEAM_FUTURE_PICKS:
         raise KeyError(f"{team_name!r} not found in TEAM_FUTURE_PICKS")
 
     simple_picks: List[SimplePick] = []
     swap_picks: List[SwapPick] = []
+    conditional_picks: List[ConditionalPick] = []
+    nested_swaps: List[NestedSwap] = []
     unresolved: List[UnresolvedEntry] = []
 
     for year, description in TEAM_FUTURE_PICKS[team_name].items():
@@ -124,14 +140,35 @@ def classify_team_picks(team_name: str) -> Tuple[List[SimplePick], List[SwapPick
                                     "-- can't be represented as a single protection window"))
                 continue
 
+            # A bare "(#lo-hi)" with no "If" -- only fires when edge-anchored
+            # (see BARE_RANGE_PROTECTED_RE's docstring); otherwise falls
+            # through to normal classification below, unchanged.
+            m = BARE_RANGE_PROTECTED_RE.match(fragment)
+            if m:
+                team_code, round_str, lo, hi = m.groups()
+                protection = invert_conveys_range_to_protection(round_str, (int(lo), int(hi)))
+                if protection is not None:
+                    simple_picks.append((year, team_code, round_str, None, protection))
+                    continue
+
+            cond = parse_conditional_pick_fragment(year, fragment)
+            if cond:
+                conditional_picks.append(cond)
+                continue
+
             swap = parse_swap_fragment(year, fragment)
             if swap:
                 swap_picks.append(swap)
                 continue
 
+            nested = parse_nested_swap_fragment(year, fragment)
+            if nested:
+                nested_swaps.append(nested)
+                continue
+
             unresolved.append((year, fragment, classify_unresolved_reason(fragment).value))
 
-    return simple_picks, swap_picks, unresolved
+    return simple_picks, swap_picks, conditional_picks, nested_swaps, unresolved
 
 
 def build_pick_assets(team_name: str,
@@ -142,7 +179,8 @@ def build_pick_assets(team_name: str,
                        current_year: int = 2026,
                        fallback_value: float = 0.0,
                        history: Optional[Dict[str, List[int]]] = None,
-                       teams_by_year: Optional[Dict[int, Sequence]] = None
+                       teams_by_year: Optional[Dict[int, Sequence]] = None,
+                       history_by_year: Optional[Dict[int, Optional[Dict[str, List[int]]]]] = None
                        ) -> Tuple[List[PickAsset], List[UnresolvedEntry]]:
     """
     teams_for_simulation: the real 30-team league (standings_sim.Team
@@ -178,12 +216,28 @@ def build_pick_assets(team_name: str,
         e.g. pick_restrictions_321.DEFAULT_2027_HISTORY to enforce the real
         "no repeat #1 / no 3-straight top-5" restrictions -- seeded from
         actual 2025-2026 results. Has no effect if teams_for_simulation
-        isn't given. Only factually grounded for the 2027 draft specifically
-        (that's the only year with a real, known restriction carry-in), so
-        it's applied ONLY to fragments whose year == 2027; every other
-        year's fragments always use the unrestricted distribution, even if
-        they share a team code with a 2027 fragment in the same portfolio.
-        SCOPING: without `teams_by_year`, this pipeline still doesn't model
+        isn't given. LEGACY / fallback only: applied ONLY to fragments
+        whose year == 2027, every other year's fragments use the
+        unrestricted distribution -- ignored entirely if `history_by_year`
+        is given (see below). Kept only so existing callers that don't
+        pass `history_by_year` get EXACTLY their old behavior back,
+        unchanged.
+
+    history_by_year: optional {draft_year: restriction-state-or-None},
+        e.g. run_real_league.build_restriction_history_by_year()'s output
+        -- the "no repeat #1 / no 3-straight top-5" restriction CHAINED
+        across every simulated year, not just 2027. A fragment dated year
+        Y uses history_by_year.get(Y) (None if Y isn't a key, or if it
+        maps to None -- either way, no restriction enforced that year).
+        When this is given, the legacy `history` parameter above is
+        ignored completely. See build_restriction_history_by_year()'s
+        docstring for how each year's chained state is derived (it can't
+        be a single fully-correlated multi-year Monte Carlo chain without
+        a bigger rearchitecture -- see that function for the documented
+        approximation used instead, consistent with this pipeline's
+        existing per-year-independent-trials design elsewhere).
+
+    SCOPING: without `teams_by_year`, this pipeline still doesn't model
         multi-year evolving team strength -- every future year's pick
         distribution for a team is drawn from the same one-season
         simulation (current ratings), only time-discounted via years_away.
@@ -195,13 +249,17 @@ def build_pick_assets(team_name: str,
     still needs a simulation league, multi-year modeling, or manual
     judgment, each with a reason.
     """
-    simple_picks, swap_picks, unresolved = classify_team_picks(team_name)
+    simple_picks, swap_picks, conditional_picks, nested_swaps, unresolved = classify_team_picks(team_name)
     unresolved = list(unresolved)  # copy -- we'll append to it
     assets: List[PickAsset] = []
 
     needed_codes = {code for _, code, _, pick_num, _ in simple_picks if pick_num is None}
     for swap in swap_picks:
         needed_codes.update(swap.teams)
+    for cond in conditional_picks:
+        needed_codes.update({cond.team_code, cond.cond_team_code})
+    for nested in nested_swaps:
+        needed_codes.update(collect_nested_swap_teams(nested.root))
 
     # {year: {code: {"1st": [...], "2nd": [...]}}} -- round-aware (see
     # draft_pipeline_321.joint_pick_number_trials's docstring for why a
@@ -219,19 +277,27 @@ def build_pick_assets(team_name: str,
 
         years_needing_sim = {year for year, _, _, pick_num, _ in simple_picks if pick_num is None}
         years_needing_sim.update(swap.year for swap in swap_picks)
+        years_needing_sim.update(cond.year for cond in conditional_picks)
+        years_needing_sim.update(nested.year for nested in nested_swaps)
 
-        # Dedupe by (league identity, history-applies): many years can
-        # resolve to the exact same league (e.g. every year teams_by_year
-        # doesn't cover falls back to teams_for_simulation) -- run one
-        # simulation batch per distinct combo, not one per year.
-        batch_cache: Dict[Tuple[int, bool], Dict[str, Dict[str, List[int]]]] = {}
+        # Dedupe by (league identity, restriction-state identity): many
+        # years can resolve to the exact same league+history combo (e.g.
+        # every year teams_by_year doesn't cover falls back to
+        # teams_for_simulation, and years with no restriction state both
+        # map to history=None) -- run one simulation batch per distinct
+        # combo, not one per year.
+        batch_cache: Dict[Tuple[int, Optional[int]], Dict[str, Dict[str, List[int]]]] = {}
         for year in years_needing_sim:
             league = (teams_by_year or {}).get(year, teams_for_simulation)
-            use_history = history is not None and year == 2027
-            cache_key = (id(league), use_history)
+            if history_by_year is not None:
+                year_history = history_by_year.get(year)
+            else:
+                # LEGACY fallback -- see `history` param docstring.
+                year_history = history if (history is not None and year == 2027) else None
+            cache_key = (id(league), id(year_history) if year_history is not None else None)
             if cache_key not in batch_cache:
                 joint = joint_pick_number_trials(league, needed_names, trials=trials, seed=seed,
-                                                  history=history if use_history else None)
+                                                  history=year_history)
                 batch_cache[cache_key] = {c: joint[TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
             joint_tables[year] = batch_cache[cache_key]
 
@@ -289,23 +355,50 @@ def build_pick_assets(team_name: str,
         assets.append(swap_to_pick_asset(swap, round_trials, current_year=current_year,
                                           fallback_value=fallback_value))
 
+    # --- Tier 3: same-year cross-pick conditionals (need the joint tables too) ---
+    for cond in conditional_picks:
+        table = joint_tables.get(cond.year, {})
+        if cond.team_code not in table or cond.cond_team_code not in table:
+            unresolved.append((cond.year, cond.raw_text,
+                                "cross-pick conditional parsed but no simulation league was provided "
+                                "(pass teams_for_simulation to resolve it)"))
+            continue
+        assets.append(conditional_pick_to_asset(cond, table, current_year=current_year,
+                                                 fallback_value=fallback_value))
+
+    # --- Tier 4: nested swaps (need the joint tables too) ---
+    for nested in nested_swaps:
+        table = joint_tables.get(nested.year, {})
+        needed = collect_nested_swap_teams(nested.root)
+        if not all(t in table for t in needed):
+            unresolved.append((nested.year, nested.raw_text,
+                                "nested swap parsed but no simulation league was provided "
+                                "(pass teams_for_simulation to resolve it)"))
+            continue
+        assets.append(nested_swap_to_pick_asset(nested, table, current_year=current_year,
+                                                 fallback_value=fallback_value))
+
     return assets, unresolved
 
 
 if __name__ == "__main__":
     print("=== Tier breakdown across all 30 teams (no simulation league) ===")
-    totals = {"simple": 0, "swap_parsed": 0, "unresolved": 0}
+    totals = {"simple": 0, "swap_parsed": 0, "conditional_parsed": 0, "nested_parsed": 0, "unresolved": 0}
     reason_counts: Dict[str, int] = {}
     for team in TEAM_FUTURE_PICKS:
-        simple, swaps, unresolved = classify_team_picks(team)
+        simple, swaps, conditionals, nested, unresolved = classify_team_picks(team)
         totals["simple"] += len(simple)
         totals["swap_parsed"] += len(swaps)
+        totals["conditional_parsed"] += len(conditionals)
+        totals["nested_parsed"] += len(nested)
         totals["unresolved"] += len(unresolved)
         for _, _, reason in unresolved:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
     print(f"Simple (known slot, bare future, or protected future): {totals['simple']}")
     print(f"Swap fragments parsed (need a simulation league to resolve): {totals['swap_parsed']}")
+    print(f"Same-year cross-pick conditionals parsed (need a simulation league to resolve): {totals['conditional_parsed']}")
+    print(f"Nested swap fragments parsed (need a simulation league to resolve): {totals['nested_parsed']}")
     print(f"Still unresolved: {totals['unresolved']}")
     print("\nUnresolved breakdown by reason:")
     for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):

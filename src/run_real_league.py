@@ -50,7 +50,8 @@ from conferences import TEAM_CONFERENCE
 from draft_picks_data import TEAM_FUTURE_PICKS
 from pick_resolver import build_pick_assets
 from pick_grading import grade_pick_portfolio
-from pick_restrictions_321 import DEFAULT_2027_HISTORY
+from pick_restrictions_321 import DEFAULT_2027_HISTORY, advance_history, derive_own_picks
+from draft_pipeline_321 import monte_carlo_321_pick_distribution
 from standings_sim import Team, expected_wins
 from data_paths import find_data_file
 from darko_ratings import (
@@ -67,6 +68,8 @@ CALIBRATION_SEED = 11
 GRADING_SEED = 5
 TRIALS_PER_TEAM = 2000  # lower = faster/noisier, higher = slower/tighter
 STANDINGS_TRIALS = 2000  # trials per year for the projected-standings report (build_projected_standings)
+RESTRICTION_TRIALS = 1000  # trials per year for chaining pick restrictions forward (build_restriction_history_by_year)
+RESTRICTION_SEED = 17
 RESULTS_FILE = "league_pick_grades.md"
 STANDINGS_FILE = "projected_standings.md"
 FINAL_DRAFT_YEAR = FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET  # 2033 -- outside darko_ratings.py's window, falls back to base
@@ -147,6 +150,70 @@ def build_projected_standings(base_teams: Sequence[Team], teams_by_year: Dict[in
     return result
 
 
+def build_restriction_history_by_year(base_teams: Sequence[Team], teams_by_year: Dict[int, List[Team]],
+                                       trials: int = RESTRICTION_TRIALS, seed: int = RESTRICTION_SEED
+                                       ) -> Dict[int, Dict[str, List[int]]]:
+    """
+    Chains pick_restrictions_321.py's "no repeat #1 / no 3-straight top-5"
+    rule across EVERY simulated draft year (2027 through FINAL_DRAFT_YEAR),
+    not just 2027 -- previously the only year with a real, known
+    restriction carry-in (real 2025+2026 results), so pick_resolver.py
+    special-cased it and every later year was simulated completely
+    unrestricted.
+
+    METHOD: starts from DEFAULT_2027_HISTORY (the real seed). For each
+    year in order: (1) record the CURRENT history state as that year's
+    entry in the result -- what restrictions apply going INTO that year's
+    draft; (2) run a full 30-team monte_carlo_321_pick_distribution for
+    that year's league (teams_by_year's evolved ratings where covered,
+    base_teams otherwise -- same fallback every other multi-year function
+    here uses) UNDER that history state; (3) collapse that year's full
+    per-team pick distribution down to one representative "own pick" per
+    team via pick_restrictions_321.derive_own_picks() (the modal/most-
+    likely outcome -- see that function's docstring for why a single
+    deterministic value per year, rather than a fully-correlated per-trial
+    multi-year chain, is the right level of approximation here: every
+    OTHER multi-year piece of this pipeline -- standings, grading -- is
+    already independent-trials-per-year too, nothing here previously
+    correlated a team's own 2028 luck to its own 2027 luck either); (4)
+    pick_restrictions_321.advance_history() folds that into next year's
+    state. Sequential by construction -- each year's simulation depends on
+    the previous year's result, so this can't be parallelized across
+    years (it's still cheap: same per-trial cost as one
+    monte_carlo_321_pick_distribution call, just run FINAL_DRAFT_YEAR -
+    FIRST_DRAFT_YEAR_COVERED + 2 times in sequence).
+
+    Returns {draft_year: history_state_used_for_that_years_draw} -- pass
+    directly as pick_resolver.build_pick_assets's `history_by_year`.
+    """
+    years = [FIRST_DRAFT_YEAR_COVERED - 1] + list(range(FIRST_DRAFT_YEAR_COVERED,
+                                                          FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET)) + [FINAL_DRAFT_YEAR]
+    history_by_year: Dict[int, Dict[str, List[int]]] = {}
+    history = DEFAULT_2027_HISTORY
+    for year in years:
+        history_by_year[year] = history
+        league = teams_by_year.get(year, base_teams)
+        distribution = monte_carlo_321_pick_distribution(league, trials=trials, seed=seed, history=history)
+        own_picks = derive_own_picks(distribution)
+        history = advance_history(history, own_picks)
+    return history_by_year
+
+
+def summarize_restrictions(history_by_year: Dict[int, Dict[str, List[int]]]) -> List[str]:
+    """Human-readable lines: which team is restricted from which slot, in which year -- for transparency/spot-checking."""
+    lines = []
+    for year in sorted(history_by_year):
+        restricted = []
+        for team, picks in sorted(history_by_year[year].items()):
+            if picks and picks[-1] == 1:
+                restricted.append(f"{team} (blocked from #1)")
+            if len(picks) >= 2 and picks[-2] <= 5 and picks[-1] <= 5:
+                restricted.append(f"{team} (blocked from top-5)")
+        if restricted:
+            lines.append(f"  {year}: " + "; ".join(restricted))
+    return lines
+
+
 def write_standings_report(standings_by_year: Dict[int, Dict[str, float]], conferences: Dict[str, str],
                             path: str) -> None:
     lines = ["# Projected Standings -- Underlying the Pick Value Projections", ""]
@@ -185,13 +252,15 @@ def write_standings_report(standings_by_year: Dict[int, Dict[str, float]], confe
 
 
 def grade_team(team_name: str, teams: Sequence[Team], teams_by_year: Dict[int, List[Team]] = None,
+               history_by_year: Dict[int, Dict[str, List[int]]] = None,
                trials: int = TRIALS_PER_TEAM) -> Tuple[List[dict], List[tuple]]:
     # The market win totals this league is calibrated from are the 2026-27
     # season's O/U lines, so the resulting lottery this pipeline simulates
     # IS the 2027 draft -- the first one the 3-2-1 restrictions apply to.
-    # Seed real 2025+2026 history (pick_restrictions_321.py) so simulated
-    # 2027 lottery draws correctly enforce "no repeat #1" (blocks
-    # Washington) and "no 3-straight top-5" (blocks Utah).
+    # `history_by_year` (build_restriction_history_by_year(), seeded from
+    # real 2025+2026 results for 2027 and chained forward from there --
+    # see pick_restrictions_321.py) enforces "no repeat #1" / "no
+    # 3-straight top-5" for EVERY simulated draft year, not just 2027.
     #
     # teams_by_year (darko_ratings.py-derived, see build_future_year_teams)
     # overrides the 2028-2032 drafts with DARKO+longevity-evolved ratings;
@@ -200,7 +269,8 @@ def grade_team(team_name: str, teams: Sequence[Team], teams_by_year: Dict[int, L
     assets, unresolved = build_pick_assets(team_name, teams_for_simulation=teams,
                                             trials=trials, seed=GRADING_SEED,
                                             history=DEFAULT_2027_HISTORY,
-                                            teams_by_year=teams_by_year)
+                                            teams_by_year=teams_by_year,
+                                            history_by_year=history_by_year)
     graded = grade_pick_portfolio(assets)
     return graded, unresolved
 
@@ -326,11 +396,24 @@ def main():
     write_standings_report(standings_by_year, conferences, STANDINGS_FILE)
     print(f"  done in {time.time() - t0:.1f}s -- written to {STANDINGS_FILE}")
 
+    print(f"\nChaining pick restrictions ('no repeat #1 / no 3-straight top-5') across "
+          f"{FIRST_DRAFT_YEAR_COVERED - 1}-{FINAL_DRAFT_YEAR} ({RESTRICTION_TRIALS} trials/year)...")
+    t0 = time.time()
+    history_by_year = build_restriction_history_by_year(teams, teams_by_year)
+    restriction_lines = summarize_restrictions(history_by_year)
+    if restriction_lines:
+        print("  Restricted teams by year (modal-outcome-derived, see build_restriction_history_by_year):")
+        for line in restriction_lines:
+            print(line)
+    else:
+        print("  No team triggers a restriction in any simulated year.")
+    print(f"  done in {time.time() - t0:.1f}s")
+
     print(f"\nGrading {len(requested)} team(s), {TRIALS_PER_TEAM} trials each...")
     t0 = time.time()
     all_results: Dict[str, Tuple[List[dict], List[tuple]]] = {}
     for i, name in enumerate(requested, 1):
-        graded, unresolved = grade_team(name, teams, teams_by_year=teams_by_year)
+        graded, unresolved = grade_team(name, teams, teams_by_year=teams_by_year, history_by_year=history_by_year)
         all_results[name] = (graded, unresolved)
         print(f"  [{i}/{len(requested)}] {name}: {len(graded)} picks graded, "
               f"{len(unresolved)} unresolved  ({time.time() - t0:.1f}s elapsed)")
