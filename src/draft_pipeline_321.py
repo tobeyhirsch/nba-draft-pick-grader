@@ -243,3 +243,81 @@ def joint_pick_number_trials(teams: Sequence[Team], team_names_of_interest: Sequ
             results[n]["1st"].append(first_round[n])
             results[n]["2nd"].append(second_round[n])
     return results
+
+
+def multi_year_joint_pick_number_trials(teams_by_year: Dict[int, Sequence[Team]],
+                                         team_names_of_interest: Sequence[str],
+                                         start_year: int, end_year: int,
+                                         trials: int = 5000, games_per_team: int = 82,
+                                         seed: int = None,
+                                         base_history: Optional[Dict[str, List[int]]] = None
+                                         ) -> Dict[int, Dict[str, Dict[str, List[int]]]]:
+    """
+    Like joint_pick_number_trials, but CORRELATED ACROSS YEARS instead of
+    within a single year: for each trial, sequentially simulates every year
+    from start_year through end_year (inclusive), chaining the "no repeat
+    #1 / no 3-straight top-5" restriction state forward via
+    pick_restrictions_321.advance_history exactly like
+    sequential_league_sim.py's per-world loop does, so that trial index i's
+    outcome in one year and trial index i's outcome in a LATER year both
+    describe the SAME simulated multi-year world (same schedule draws, same
+    lottery draws, same restriction consequences carried forward). That's
+    what a cross-year conditional needs (swap_resolver.ConditionalPick with
+    cond_year != year) and an ordinary single-year joint_pick_number_trials
+    batch structurally can't provide -- its trial i in year A has no
+    relationship to trial i in year B, because each year is its own
+    independent batch with its own RNG draws.
+
+    teams_by_year: {year: league} for EVERY year in [start_year, end_year]
+    -- e.g. darko_ratings-evolved ratings for 2028-2032, base market ratings
+    for 2027/2033, matching what run_real_league.py/pick_resolver.py already
+    use elsewhere. Missing a year raises KeyError rather than silently
+    falling back, since a silently-wrong league for one year in the chain
+    would quietly corrupt every later year's restriction state too.
+
+    base_history: seeds start_year's restriction state (e.g.
+    pick_restrictions_321.DEFAULT_2027_HISTORY when start_year == 2027).
+    None means no restrictions enforced at all, matching
+    _simulate_321_draft_core's own default.
+
+    Only tracks team_names_of_interest (not the full 30) in the RETURNED
+    per-team lists, same memory-saving convention as
+    joint_pick_number_trials -- the lottery/restriction mechanics
+    themselves still need and use the full league every year regardless.
+
+    Returns {year: {team_name: {"1st": [...], "2nd": [...]}}} -- same
+    per-year shape as pick_resolver.py's joint_tables, so
+    swap_resolver.resolve_conditional_pick can index it identically whether
+    it was handed this or an ordinary single-year batch.
+    """
+    if end_year < start_year:
+        raise ValueError(f"end_year ({end_year}) must be >= start_year ({start_year})")
+    years = list(range(start_year, end_year + 1))
+    missing_years = [y for y in years if y not in teams_by_year]
+    if missing_years:
+        raise KeyError(f"teams_by_year missing required year(s): {missing_years}")
+
+    names_of_interest = list(team_names_of_interest)
+    for y in years:
+        all_names = {t.name for t in teams_by_year[y]}
+        missing_teams = [n for n in names_of_interest if n not in all_names]
+        if missing_teams:
+            raise KeyError(f"Team(s) not found in {y}'s league: {missing_teams}")
+
+    from pick_restrictions_321 import advance_history  # local import: only this function needs restriction-chaining logic
+
+    rng = random.Random(seed)
+    results: Dict[int, Dict[str, Dict[str, List[int]]]] = {
+        y: {n: {"1st": [], "2nd": []} for n in names_of_interest} for y in years
+    }
+    for _ in range(trials):
+        history = base_history
+        for y in years:
+            wins, first_round = _simulate_321_draft_core(teams_by_year[y], rng=rng,
+                                                           games_per_team=games_per_team, history=history)
+            second_round = simulate_second_round_order(first_round, wins)
+            for n in names_of_interest:
+                results[y][n]["1st"].append(first_round[n])
+                results[y][n]["2nd"].append(second_round[n])
+            history = advance_history(history, first_round)
+    return results

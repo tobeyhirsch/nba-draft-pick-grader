@@ -561,26 +561,45 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 
 ## Known gaps (honest status, not hidden)
 
-- **41 of 451 pick fragments across the league don't auto-resolve** (last
-  checked, after `draft_picks_data.py` was re-synced from LD Sport's live
-  page -- see that module's docstring for the refresh process; up from 32
-  of 419 mainly because the live text turned out to have MORE precise/
-  nested swap language in a handful of cells than the prior snapshot did,
-  not because anything regressed): 26 have swap language this conservative
-  parser deliberately declines to guess at -- a per-member inline condition
-  whose real-world semantics are ambiguous from the text alone (dynamic
-  pool vs. all-or-nothing gate -- see `swap_resolver.py`'s module note), an
-  unconfirmed reordered protection, or a genuine elliptical continuation
-  fragment; 13 are cross-pick conditionals where the condition's year
-  differs from the pick's own year (still needs multiple draft years
-  correlated within the same trial, out of scope for the reason given in
-  `swap_resolver.py`); 2 don't match any known pattern. Notably, the two
-  literal "(conditional chain)" placeholders that used to sit in Denver's
-  multi-year protection chain (surfaced via OKC's traded-for Denver picks)
-  are gone now that the live refresh pulled the real notation for those
-  cells -- they still don't auto-resolve (now correctly bucketed as
-  cross-pick conditionals), but the resolver is no longer looking at a
-  placeholder. `pick_resolver.py`'s output always lists these with a
+- **Cross-year conditionals (pick's condition references a DIFFERENT
+  draft year, e.g. "MIA 1st (If 2027 MIA 1st is #15-30)" under a team's
+  2028 entry) now auto-resolve when they're a single-team, single-condition
+  fragment** -- `draft_pipeline_321.multi_year_joint_pick_number_trials`
+  runs a genuinely CORRELATED sequential simulation across every year from
+  2027 through the latest year a team's cross-year conditions reference
+  (restriction-chained via the same `advance_history` mechanism
+  `sequential_league_sim.py` uses, so trial i's outcome in one year and
+  trial i's outcome in a later year describe the same simulated world),
+  and `swap_resolver.ConditionalPick`/`resolve_conditional_pick` --
+  previously same-year only -- now take a `cond_year` and resolve either
+  case from whichever correlated batch the caller supplies. This only
+  builds the extra (more expensive) multi-year batch for a team that
+  actually has a cross-year conditional (2 of 30 teams currently: Charlotte
+  Hornets, Miami Heat) -- roughly +5s per affected team's grading run,
+  negligible against the pipeline's existing per-team cost.
+- **37 of 451 pick fragments across the league still don't auto-resolve**
+  (down from 41 before the cross-year fix above, and from 40 the day
+  before that as `draft_picks_data.py`'s live re-sync shifted a fragment's
+  wording -- see that module's docstring for the refresh process): 25 have
+  swap language this conservative parser deliberately declines to guess at
+  -- a per-member inline condition whose real-world semantics are ambiguous
+  from the text alone (dynamic pool vs. all-or-nothing gate -- see
+  `swap_resolver.py`'s module note), an unconfirmed reordered protection,
+  or a genuine elliptical continuation fragment; 10 are cross-pick
+  conditionals that are COMPOUND rather than single-team/single-condition
+  -- either a multi-clause chain of several prior years' outcomes ANDed
+  together (Denver Nuggets' and Oklahoma City Thunder's top-5-protection
+  carry-chains), a condition attached to a whole nested-swap group rather
+  than one team's plain pick (Philadelphia 76ers' 2028 entry -- on
+  inspection this one isn't even genuinely cross-year, its "(If 2028 PHI
+  1st is #1-8)" clause references the SAME year as the fragment itself,
+  self-referentially, which is a nested-swap-grammar problem, not a
+  cross-year one), or a cross-year condition nested inside a 3-4 way swap
+  comparison (Detroit Pistons', Los Angeles Clippers', and Utah Jazz's
+  shared CHA/LAC/DET/MIA/NYK swap group) -- correctly resolving these needs
+  the SEPARATE, harder generalized nested-swap-grammar extension this
+  project has deliberately not attempted rather than a guess; 2 don't match
+  any known pattern. `pick_resolver.py`'s output always lists these with a
   specific reason rather than silently guessing.
 - **Multi-year team-strength evolution is now partial, not absent.** The
   2028-2032 drafts use `darko_ratings.py`'s DARKO+longevity-evolved ratings

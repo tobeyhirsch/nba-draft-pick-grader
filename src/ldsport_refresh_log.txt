@@ -15,3 +15,7 @@ picks: 2 change(s)
   ~ Portland Trail Blazers 2027: 'POR 1st, MIN 2nd, NO/POR (Less Favorable) 2nd (#31-55)' -> 'POR 1st, MIN 2nd, NO/POR (Less Favorable) 2nd (If #31-55)'
   ~ Utah Jazz 2029: 'CLE/MIN (If #6-30)/UTA (Most Favorable) 1st, CLE/MIN (If #6-30)/UTA (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd' -> 'CLE /MIN (If #6-30)/UTA (Most Favorable) 1st, CLE/MIN (#If #6-30)/UTA (2nd Favorable) 1st, MIN 2nd (If 2029 MIN 1st is #1-5), UTA 2nd'
 
+=== 2026-08-25 ===
+rosters: 0 change(s)
+picks: 0 change(s)
+

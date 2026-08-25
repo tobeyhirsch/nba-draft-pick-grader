@@ -32,7 +32,7 @@ this pipeline already enforces via simulation (pick_restrictions_321.py),
 so keeping a redundant static "*" in the text would just go stale; see
 the NOTE comments on Memphis Grizzlies, Utah Jazz, and Washington
 Wizards' 2027 entries below for the specific restrictions involved.
-Last synced: 2026-08-23. 90 of 210 team-years changed from the prior
+Last synced: 2026-08-25. 90 of 210 team-years changed from the prior
 version in this sync (mostly additional/resolved conditional picks and
 swap-language refinements; a handful of picks disappeared where a team's
 prior conditional pick apparently already resolved or was traded away).
