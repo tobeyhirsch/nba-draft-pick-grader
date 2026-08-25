@@ -147,6 +147,7 @@ from data_paths import find_data_file
 from roster_continuity import continuity as contract_continuity
 from trusted_rosters import trusted_team_for
 from player_value_regression import ProjectionContext
+from player_availability_model import AvailabilityContext
 
 DPM_CSV = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
 LONGEVITY_CSV = find_data_file("darkolongevityprojections.csv", os.path.dirname(os.path.abspath(__file__)))
@@ -256,8 +257,40 @@ def _dpm_for_offset(player: DarkoPlayer, offset: int, projection_ctx: Optional[P
     return player.dpm
 
 
+def _availability_for(player: DarkoPlayer, offset: int, availability_ctx: Optional[AvailabilityContext]) -> float:
+    """
+    The fraction of a season `player` is expected to actually be AVAILABLE
+    to play at `offset` years out (1.0 = no discount, i.e. today's prior
+    behavior with no availability_ctx). This is a THIRD, independent
+    presence-style signal alongside longevity (still an NBA player
+    anywhere) and roster_continuity (still under contract to THIS team) --
+    a player can be on the active roster and still miss real games to
+    injury, which neither of those two catches (see
+    player_availability_model.py's module docstring for what this does
+    and doesn't model -- games-missed rate, not injury TYPE/severity).
+
+    years_ahead = offset + 1, same anchoring logic as _dpm_for_offset:
+    offset=0's own DPM already reflects years_ahead=1 from
+    player_availability_model.py's last real data point, so offset k needs
+    one further year of aging on top of that anchor. DarkoPlayer carries
+    no age field, so the age-conditioned baseline fallback tier (for a
+    player with NO availability history at all) can't be reached from
+    here -- those players fall through to the unconditioned league-average
+    tier instead (see AvailabilityContext.rate_at /
+    player_availability_model.project_availability's own tier ordering).
+    That's a known, accepted narrowing of this specific integration path,
+    not a limitation of the module itself (its own __main__ demo exercises
+    the age-conditioned tier directly, where an age IS available).
+    """
+    if availability_ctx is None or offset < 1:
+        return 1.0
+    rate, _source = availability_ctx.rate_at(player.name, years_ahead=offset + 1)
+    return rate
+
+
 def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0,
-                     projection_ctx: Optional[ProjectionContext] = None) -> float:
+                     projection_ctx: Optional[ProjectionContext] = None,
+                     availability_ctx: Optional[AvailabilityContext] = None) -> float:
     """
     MPG-weighted average DPM at `offset` years from now (0 = current
     roster, no decay). Denominator is fixed at the team's CURRENT total
@@ -275,6 +308,16 @@ def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0,
     offset instead of reusing the same fixed value at every future year --
     see _dpm_for_offset. None (the default) reproduces the exact prior
     flat-hold behavior.
+
+    availability_ctx (player_availability_model.AvailabilityContext,
+    optional): when given, each player's term is ALSO scaled by their
+    projected games-missed-adjusted availability at this offset -- see
+    _availability_for. None (the default) reproduces the exact prior
+    behavior (no availability discount, matching how this parameter didn't
+    exist before). Like continuity, only applied for offset >= 1 -- the
+    CURRENT season's market-calibrated rating already implicitly prices in
+    real injury expectations, so discounting offset=0 again would double-
+    count that.
     """
     baseline_total_mpg = sum(p.mpg for p in team_players)
     if baseline_total_mpg <= 0:
@@ -286,14 +329,16 @@ def team_net_rating(team_players: Sequence[DarkoPlayer], offset: int = 0,
         weighted = sum(
             _dpm_for_offset(p, offset, projection_ctx) * p.mpg * p.presence(offset)
             * contract_continuity(p.name, season_start_year)
+            * _availability_for(p, offset, availability_ctx)
             for p in team_players
         )
     return weighted / baseline_total_mpg
 
 
 def all_teams_net_ratings(players: Sequence[DarkoPlayer], offset: int = 0,
-                           projection_ctx: Optional[ProjectionContext] = None) -> Dict[str, float]:
-    return {team: team_net_rating(team_players, offset, projection_ctx)
+                           projection_ctx: Optional[ProjectionContext] = None,
+                           availability_ctx: Optional[AvailabilityContext] = None) -> Dict[str, float]:
+    return {team: team_net_rating(team_players, offset, projection_ctx, availability_ctx)
             for team, team_players in _group_by_team(players).items()}
 
 
@@ -323,7 +368,8 @@ def darko_elo(darko_rating: float, slope: float, intercept: float) -> float:
 
 def future_year_teams(players: Sequence[DarkoPlayer], offset: int, slope: float, intercept: float,
                        conferences: Dict[str, str],
-                       projection_ctx: Optional[ProjectionContext] = None) -> List[Team]:
+                       projection_ctx: Optional[ProjectionContext] = None,
+                       availability_ctx: Optional[AvailabilityContext] = None) -> List[Team]:
     """
     Team list for `offset` years from now (1..MAX_OFFSET), using this
     module's DARKO+longevity-evolved net rating run through the SAME
@@ -332,10 +378,15 @@ def future_year_teams(players: Sequence[DarkoPlayer], offset: int, slope: float,
     projection_ctx: see team_net_rating -- when given, re-projects each
     player's DPM for this specific offset instead of holding one fixed
     value flat across every future year.
+
+    availability_ctx: see team_net_rating -- when given, additionally
+    discounts each player's term by their projected games-missed
+    availability at this offset.
     """
     if not (1 <= offset <= MAX_OFFSET):
         raise ValueError(f"offset must be 1-{MAX_OFFSET} (near-term window only, see module docstring)")
-    ratings = all_teams_net_ratings(players, offset=offset, projection_ctx=projection_ctx)
+    ratings = all_teams_net_ratings(players, offset=offset, projection_ctx=projection_ctx,
+                                     availability_ctx=availability_ctx)
     missing_conf = set(ratings) - set(conferences)
     if missing_conf:
         raise KeyError(f"No conference assignment for: {sorted(missing_conf)}")

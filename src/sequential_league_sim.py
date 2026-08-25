@@ -100,6 +100,7 @@ from pick_ownership_resolver import resolve_pick_ownership_for_year
 from team_codes import TEAM_NAME_TO_ABBREV
 from darko_ratings import all_teams_net_ratings, fit_darko_to_elo, future_year_teams, MAX_OFFSET, FIRST_DRAFT_YEAR_COVERED
 from player_value_regression import load_darko_players_with_projection, load_projection_context
+from player_availability_model import load_availability_context
 
 YEARS: List[int] = [2027, 2028, 2029, 2030, 2031, 2032, 2033]
 FINAL_DRAFT_YEAR = FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET  # 2033, matches run_real_league.py
@@ -121,11 +122,13 @@ def _build_base_by_year(base_teams: Sequence[Team], multi_year_stats_csv) -> Tup
     slope, intercept, _r2 = fit_darko_to_elo(darko_now, market_elo)
     conferences = {t.name: t.conference for t in base_teams}
     projection_ctx = load_projection_context(multi_year_stats_csv) if multi_year_stats_csv else None
+    availability_ctx = load_availability_context(multi_year_stats_csv) if multi_year_stats_csv else None
 
     by_year: Dict[int, List[Team]] = {2027: list(base_teams), FINAL_DRAFT_YEAR: list(base_teams)}
     for offset in range(1, MAX_OFFSET + 1):
         year = FIRST_DRAFT_YEAR_COVERED + offset - 1
-        by_year[year] = future_year_teams(players, offset, slope, intercept, conferences, projection_ctx)
+        by_year[year] = future_year_teams(players, offset, slope, intercept, conferences,
+                                           projection_ctx, availability_ctx)
     return by_year, slope
 
 

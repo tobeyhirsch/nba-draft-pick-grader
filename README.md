@@ -687,6 +687,30 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
     signal available for the season that's actually about to happen), and
     2033 falls back to that same flat baseline since it's outside the
     5-year window.
+- **Injury/health availability is now a real, independent signal for
+  2028-2032 (games-missed rate, not injury type/severity).**
+  `player_availability_model.py` fits the same shape of regression as the
+  skill projection above (age/age^2 + trend, this time on
+  games-played history from `build_multi_year_stats.py`'s new "Games"
+  column), and `darko_ratings.py`'s `team_net_rating` now multiplies each
+  player's future-year term by their projected availability, alongside
+  (not instead of) longevity and roster continuity -- see
+  `darko_ratings._availability_for`'s docstring for why those three don't
+  double-count each other. Honest caveat, reported loudly at fit time: this
+  regression's r^2 is only 0.076 (vs. ~0.64 for skill) -- games-missed is
+  dominated by largely unpredictable acute events, which is a real finding
+  about the data, not a fit-quality bug, and is exactly why a three-tier
+  fallback exists (own last season, then a league-wide age-conditioned
+  baseline, then an unconditioned average) rather than trusting the
+  regression alone. Two real sourcing attempts were made and rejected
+  before landing here: Pro Sports Transactions sits behind active
+  Cloudflare bot-detection (declined to work around it, same as any other
+  bot-detection); the `nbainjuries` package (wraps the NBA's own official
+  injury reports, MIT-licensed) requires a Java runtime this machine
+  doesn't have, and even with Java would only give point-in-time status
+  snapshots requiring separate reconstruction into clean injury-duration
+  events, not a ready-made log. Neither gap is filled -- injury TYPE/
+  severity/chronicity still isn't modeled, only games-missed COUNT.
 - **The 3-2-1 lottery is applied uniformly to every future year (2027 and
   beyond)**, even though the league has only confirmed the format through
   the 2029 draft; 2030+ rules are pending a future Board of Governors vote.

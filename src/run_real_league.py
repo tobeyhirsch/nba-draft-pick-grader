@@ -59,6 +59,7 @@ from darko_ratings import (
     future_year_teams, MAX_OFFSET, FIRST_DRAFT_YEAR_COVERED,
 )
 from player_value_regression import load_darko_players_with_projection, load_projection_context
+from player_availability_model import load_availability_context
 
 # Checks several common data/ locations relative to THIS file (see
 # data_paths.py) rather than assuming one fixed layout -- works whether
@@ -113,7 +114,13 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
     player (via load_projection_context()/darko_ratings.py's
     projection_ctx) instead of every year reusing the same fixed
     next-season projection -- see darko_ratings.py's "WHAT ELSE THIS DOES
-    NOT MODEL" docstring section.
+    NOT MODEL" docstring section. The SAME CSV also now carries a Games
+    column (build_multi_year_stats.py), so each future year's rating ALSO
+    discounts by each player's own projected availability (games-missed
+    rate) at that offset via player_availability_model.
+    load_availability_context()/darko_ratings.py's availability_ctx -- a
+    third, independent presence signal alongside longevity and roster
+    continuity (see darko_ratings.py's _availability_for docstring).
     """
     players = load_darko_players_with_projection(MULTI_YEAR_STATS_CSV)
     darko_now = all_teams_net_ratings(players, offset=0)
@@ -123,10 +130,12 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
           f"(slope={slope:.2f}, intercept={intercept:.1f}) -- see darko_ratings.py to inspect further")
 
     projection_ctx = load_projection_context(MULTI_YEAR_STATS_CSV) if MULTI_YEAR_STATS_CSV else None
+    availability_ctx = load_availability_context(MULTI_YEAR_STATS_CSV) if MULTI_YEAR_STATS_CSV else None
 
     conferences = {t.name: t.conference for t in base_teams}
     return {
-        FIRST_DRAFT_YEAR_COVERED + offset - 1: future_year_teams(players, offset, slope, intercept, conferences, projection_ctx)
+        FIRST_DRAFT_YEAR_COVERED + offset - 1: future_year_teams(
+            players, offset, slope, intercept, conferences, projection_ctx, availability_ctx)
         for offset in range(1, MAX_OFFSET + 1)
     }
 
