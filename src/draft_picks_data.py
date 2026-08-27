@@ -32,7 +32,7 @@ this pipeline already enforces via simulation (pick_restrictions_321.py),
 so keeping a redundant static "*" in the text would just go stale; see
 the NOTE comments on Memphis Grizzlies, Utah Jazz, and Washington
 Wizards' 2027 entries below for the specific restrictions involved.
-Last synced: 2026-08-25. 90 of 210 team-years changed from the prior
+Last synced: 2026-08-27. 90 of 210 team-years changed from the prior
 version in this sync (mostly additional/resolved conditional picks and
 swap-language refinements; a handful of picks disappeared where a team's
 prior conditional pick apparently already resolved or was traded away).
@@ -61,7 +61,7 @@ Data current as of the August 2026 fetch. Draft-pick ownership changes with
 every trade -- this WILL go stale; treat it as a snapshot, not a live feed.
 """
 
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict
 
 TEAM_FUTURE_PICKS: Dict[str, Dict[int, str]] = {
     "Atlanta Hawks": {
@@ -351,17 +351,6 @@ TEAM_FUTURE_PICKS: Dict[str, Dict[int, str]] = {
         2033: "WAS 1st, DAL 2nd",
     },
 }
-
-
-class RawPick(NamedTuple):
-    year: int
-    description: str
-
-
-def get_team_picks(team_name: str) -> Dict[int, str]:
-    if team_name not in TEAM_FUTURE_PICKS:
-        raise KeyError(f"{team_name!r} not found. Valid names: {sorted(TEAM_FUTURE_PICKS)}")
-    return TEAM_FUTURE_PICKS[team_name]
 
 
 if __name__ == "__main__":

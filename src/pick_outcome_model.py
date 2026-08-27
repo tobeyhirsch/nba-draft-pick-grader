@@ -183,13 +183,6 @@ def team_dpm_delta(pick_number: int, tier: str, years_since_drafted: int) -> flo
     return (mpg * ramp_fraction(years_since_drafted) * dpm) / TEAM_MPG_POOL
 
 
-def sample_team_dpm_delta(pick_number: int, years_since_drafted: int, rng: random.Random
-                           ) -> Tuple[str, float]:
-    """Convenience: sample a tier and return (tier, team_dpm_delta) together."""
-    tier = sample_outcome_tier(pick_number, rng)
-    return tier, team_dpm_delta(pick_number, tier, years_since_drafted)
-
-
 if __name__ == "__main__":
     # Recompute BUCKET_TIER_PROBS/OVERALL_PROBS from the source xlsx directly,
     # to verify the hardcoded constants above still match the source file.
