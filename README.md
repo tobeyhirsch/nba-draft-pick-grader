@@ -116,6 +116,16 @@ Everything above is exercised end to end by `run_real_league.py`.
 sit alongside the pipeline as tools you call directly with real assets --
 they aren't wired into the automatic league-wide run.
 
+Two things this diagram doesn't show, both added after it was drawn: (1)
+`darko_ratings.py`'s per-player term is now ALSO discounted by
+`player_availability_model.py`'s projected games-missed rate, the same
+`multi_year_advanced_stats.csv` -> regression shape as
+`player_value_regression.py` but for availability instead of skill --
+see that module's bullet below. (2) `real_rosters_202627.py` and
+`draft_picks_data.py` are no longer static/manually-refreshed inputs --
+`ldsport_scraper.py` + `refresh_ldsport_data.py`, scheduled daily via
+`launchd`, keep them in sync automatically (see their bullets below).
+
 ## What each file does
 
 ### Data layer (real, sourced facts)
@@ -131,33 +141,36 @@ they aren't wired into the automatic league-wide run.
   identical `(Player, Team)` keys against the DPM file), each with a 0-100
   "still an NBA player" probability at +1 through +15 years out. Input to
   `darko_ratings.py`.
-- **`multi_year_advanced_stats_TEMPLATE.csv`** -- NOT loaded by anything;
-  shows the exact schema `player_value_regression.py` expects (Player,
-  Team, Season, Age, DARKO_DPM, BPM, VORP -- one row per player-season) so
-  a real multi-year file can be dropped in without guessing the format.
 - **`multi_year_advanced_stats.csv`** -- the REAL multi-year file, 1,501
   player-season rows / 713 players, 2023-24 through 2025-26 (Season labeled
-  by ending year: 2024/2025/2026). Built by `build_multi_year_stats.py`
+  by ending year: 2024/2025/2026). Columns: `Player, Team, Season, Age,
+  DARKO_DPM, BPM, VORP, PER, Games`. Built by `build_multi_year_stats.py`
   from a user-supplied `Advanced Stats.xlsx` (DARKO DPM leaderboards +
-  Basketball-Reference PER/BPM/VORP/Age tables for those 3 seasons) --
+  Basketball-Reference PER/BPM/VORP/Age/Games tables for those 3 seasons) --
   that script isn't part of the runtime pipeline, it's a one-time
-  converter; re-run it if a newer `Advanced Stats.xlsx` is supplied. Also
-  carries a PER column the regression doesn't use yet (see
+  converter; re-run it if a newer `Advanced Stats.xlsx` is supplied. `Games`
+  is sourced from each player's TOT/2TM/3TM/4TM rollup row when one exists
+  (a mid-season trade's true full-season total), not their single-team row
+  (which `Age`/`BPM`/`VORP`/`PER` still use, an accepted partial-season
+  limitation for traded players -- see the module's docstring). Also
+  carries a PER column the skill regression doesn't use yet (see
   `player_value_regression.py`'s note on this). This is what
-  `run_real_league.MULTI_YEAR_STATS_CSV` points at.
+  `run_real_league.MULTI_YEAR_STATS_CSV` points at, feeding BOTH
+  `player_value_regression.py` (skill) and `player_availability_model.py`
+  (games-missed rate).
 - **`conferences.py`** -- static East/West assignment for all 30 teams.
 - **`draft_picks_data.py`** -- every team's pick ownership, 2027-2033, as
-  raw text transcribed from LD Sport (credited to ESPN) -- e.g. `"MIL/NO
-  (Less Favorable) 1st (If #5-30)"`. Deliberately kept as text rather than
+  raw text sourced from LD Sport (credited to ESPN) -- e.g. `"MIL/NO (Less
+  Favorable) 1st (If #5-30)"`. Deliberately kept as text rather than
   pre-resolved, since resolving conditional language requires simulation
   (see `pick_resolver.py` below). The 2026 draft has concluded, so each
   team's already-resolved 2026 selection(s) were removed -- this table now
-  starts at 2027, the next draft the pipeline actually projects. Refreshed
-  by reading the live page directly in Chrome (not the WebFetch tool,
-  which was tried first and proved unreliable on this page's dense nested
-  swap/condition notation -- see the module's docstring for specifics and
-  for how the previously-suspicious Toronto/Phoenix "(NO PICKS)" results
-  were independently cross-checked before being trusted).
+  starts at 2027, the next draft the pipeline actually projects. Kept in
+  sync by the automated refresh pipeline (`ldsport_scraper.py` +
+  `refresh_ldsport_data.py`, see below) -- an earlier manual process (WebFetch,
+  then reading the live page directly in Chrome) proved either unreliable
+  or unsustainable; see those modules' docstrings for why deterministic
+  HTML parsing replaced both.
 - **`cap_sheet_data.py`** -- parses `PlayerSalariesCSV.csv` into
   `roster_cap.Contract`/`CapSheet` objects for all 30 teams at import time.
   Its docstring has the full history of why this superseded four earlier
@@ -168,13 +181,35 @@ they aren't wired into the automatic league-wide run.
 - **`team_codes.py`** -- maps the 2-3 letter team codes used in
   `draft_picks_data.py`'s pick text (e.g. `"NO"`, `"GS"`) to the full team
   names used everywhere else in the pipeline.
-- **`real_rosters_202627.py`** -- user-supplied real depth charts for all 30
-  teams (526 players, `{team: {position: [names]}}`, names carry inline
-  annotations like "(R)"/"**"/"(RFA)" the transcription kept on purpose --
-  see its docstring). Originally just a reference dataset `cap_sheet_data.py`
-  was cross-checked against; now ALSO consumed at runtime, by
+- **`real_rosters_202627.py`** -- real depth charts for all 30 teams (526
+  players, `{team: {position: [names]}}`, names carry inline annotations
+  like "(R)"/"**"/"(RFA)" the transcription kept on purpose -- see its
+  docstring). Originally just a reference dataset `cap_sheet_data.py` was
+  cross-checked against; now ALSO consumed at runtime, by
   `trusted_rosters.py` (see below) -- it's the primary source for which
-  team a player is actually on.
+  team a player is actually on. Kept in sync by the same automated refresh
+  pipeline as `draft_picks_data.py` -- see below.
+- **`ldsport_scraper.py`** -- deterministic HTML scraper for ldsport.com's
+  depth-charts and future-draft-picks pages (site owner gave explicit
+  permission to pull this data programmatically). Deliberately does NOT
+  route content through an LLM summarizer -- an earlier WebFetch-based
+  attempt fabricated notation that wasn't on the page and silently dropped
+  real entries. Both pages are plain static HTML, so `BeautifulSoup`
+  parses them directly: exact extraction, not a paraphrase.
+- **`refresh_ldsport_data.py`** -- the diff-and-apply driver: fetches fresh
+  data via `ldsport_scraper.py`, sanity-checks it (>= 28 teams parsed, no
+  team missing a position/year -- a bad or partial fetch aborts with NO
+  files touched rather than corrupting the trusted data), diffs it
+  against the current `TEAM_DEPTH_CHARTS`/`TEAM_FUTURE_PICKS`, and
+  regenerates just the dict literal in each file (docstrings, helper
+  functions, and hand-written `# NOTE` comments attached to a team's
+  block are preserved). Every run appends a summary of what changed to
+  `ldsport_refresh_log.txt`, so unattended runs stay auditable even
+  though nothing blocks on human approval. Scheduled via a `launchd`
+  LaunchAgent (`~/Library/LaunchAgents/com.nbadraftgrader.ldsportrefresh.plist`,
+  daily at 6:00 AM local time) -- chosen over a plain long-running Python
+  daemon because `launchd` survives sleep/reboot (a missed window fires on
+  wake), which a `time.sleep()`-based loop cannot.
 
 ### Simulation layer
 
@@ -223,6 +258,15 @@ they aren't wired into the automatic league-wide run.
   returns every requested team's pick numbers **from the same trials**,
   preserving the correlation swap comparisons need (two teams' records
   aren't independent -- same conference, overlapping schedules).
+  `multi_year_joint_pick_number_trials()` generalizes this ACROSS years
+  instead of within one: for each trial, sequentially simulates every year
+  from a start year through an end year, chaining the pick-restriction
+  state forward via `pick_restrictions_321.advance_history()` exactly like
+  `sequential_league_sim.py` does, so trial i's outcome in one year and
+  trial i's outcome in a LATER year describe the same simulated
+  multi-year world -- what a cross-year conditional needs, and what an
+  ordinary single-year batch structurally can't provide (its trial i in
+  year A has no relationship to trial i in year B).
 - **`market_ratings.py`** -- converts the sportsbook win-total spreadsheet
   into calibrated Elo ratings via iterative fixed-point fitting (there's no
   closed-form solution since all 30 ratings are jointly determined). This is
@@ -273,6 +317,23 @@ they aren't wired into the automatic league-wide run.
   fixture in `__main__` for mechanics validation, and still falls back to
   fully-`None`/no-op behavior if `run_real_league.MULTI_YEAR_STATS_CSV` is
   ever unset again.
+- **`player_availability_model.py`** -- NEW, LIVE: projects a player's
+  NEXT-SEASON games-missed AVAILABILITY rate (games/82, clipped to
+  [0,1]), same regression shape as `player_value_regression.py` (age,
+  age^2, most-recent-rate, trend) but fit on `multi_year_advanced_stats.csv`'s
+  new `Games` column instead of DPM. `darko_ratings.team_net_rating` now
+  multiplies each player's future-year term by this rate too (alongside,
+  not instead of, longevity and roster continuity -- see
+  `darko_ratings._availability_for`'s docstring for why the three don't
+  double-count each other), only for offset >= 1 (the current season's
+  market-calibrated rating already implicitly prices in real injury
+  expectations). Honest finding, not hidden: this fit's r^2 is only 0.076
+  (vs. ~0.64 for skill) -- games-missed is dominated by largely
+  unpredictable acute events, which is real information about the data,
+  not a fit-quality bug -- so a three-tier fallback exists (own last
+  season -> league-wide age-conditioned baseline -> unconditioned average)
+  rather than trusting the regression alone. Does NOT model injury
+  type/severity/chronicity, only games-missed COUNT -- see "Known gaps."
 - **`roster_continuity.py`** -- NEW, LIVE: the "still under contract to
   THIS team" signal `darko_ratings.py` was missing (longevity alone only
   knows "still an NBA player somewhere"; a player can stay in the league
@@ -444,10 +505,19 @@ they aren't wired into the automatic league-wide run.
   use the SAME simulated season for every team involved:
     1. Flat "TEAM1/TEAM2[/.../TEAM5] (Qualifier) ROUND [(If #A-B)]" swaps
        (up to 5 named teams).
-    2. Same-year, single-team cross-pick conditionals -- "TEAM ROUND (If
-       YEAR OTHER_TEAM ROUND is #A-B)", e.g. "PHI 2nd (If 2028 PHI 1st is
+    2. Single-team cross-pick conditionals -- "TEAM ROUND (If YEAR
+       OTHER_TEAM ROUND is #A-B)", e.g. "PHI 2nd (If 2028 PHI 1st is
        #1-8)" -- the pick only conveys in trials where the named condition
-       holds that SAME year (`ConditionalPick`/`PickAsset.convey_probability`).
+       holds (`ConditionalPick`/`PickAsset.convey_probability`). Same-year
+       (the common case) resolves from an ordinary single-year joint-trial
+       batch; CROSS-year (the condition's YEAR differs from the fragment's
+       own year, e.g. "MIA 1st (If 2027 MIA 1st is #15-30)" under a 2028
+       entry) resolves too, but needs a genuinely correlated multi-year
+       batch instead (`draft_pipeline_321.multi_year_joint_pick_number_trials`
+       -- see `pick_resolver.py`'s bullet below). `ConditionalPick.cond_year`
+       vs `.year` is what distinguishes the two; the resolution logic
+       itself doesn't care which it got, only which joint-trials source the
+       caller supplies.
     3. 2-level NESTED swaps -- one member of a flat swap is itself a
        parenthesized flat sub-swap, e.g. "ATL/(CLE/UTA (Less Favorable))
        (More Favorable) 1st" (`NestedSwap`, evaluated per-trial via a small
@@ -472,11 +542,16 @@ they aren't wired into the automatic league-wide run.
   Memphis's 2029 "MEM/ORL (If #3-30) (More Favorable) 1st" looks identical
   to the confirmed-safe ATL/HOU case, but Orlando's own complementary
   fragment shows the condition is really about ORL's own pick number, not
-  the swap result -- left unresolved). Cross-year conditionals (the
-  condition's year differs from the pick's own year) and true multi-year
-  protection chains are still out of scope for the reason stated above --
-  they need multiple draft years correlated within the same trial, which
-  this pipeline's per-year-independent-trials design doesn't support.
+  the swap result -- left unresolved). Single-team cross-year conditionals
+  now resolve (see tier 2 above); COMPOUND multi-clause protection chains
+  (several prior years' outcomes ANDed together, e.g. Denver's and
+  Oklahoma City's top-5-protection carry-chains) and a cross-year
+  condition nested inside a 3-4 way swap comparison are still out of
+  scope -- those need either genuinely ambiguous multi-branch language
+  interpreted (risking exactly the kind of guess this module avoids) or
+  the separate, harder generalized nested-swap-grammar extension this
+  project has deliberately not attempted. See "Known gaps" below for the
+  current exact count.
 - **`pick_resolver.py`** -- the orchestrator for one team's whole pick
   portfolio. Classifies every fragment into one of five buckets (simple /
   flat swap / cross-pick conditional / nested swap / unresolved), and runs
@@ -484,7 +559,16 @@ they aren't wired into the automatic league-wide run.
   `teams_by_year`, e.g. `darko_ratings.py`'s evolved 2028-2032 teams --
   years not covered fall back to a single shared batch against the base
   league, same as before `teams_by_year` existed), returning ready-to-grade
-  `PickAsset` objects plus a list of what's still unresolved and why.
+  `PickAsset` objects plus a list of what's still unresolved and why. When
+  a team's portfolio includes a cross-year conditional, it ALSO builds one
+  additional, separate `multi_year_joint_pick_number_trials` batch
+  (correlated from 2027 through the latest year that team's cross-year
+  conditions reference, using the same `teams_by_year`/`history_by_year`
+  inputs as everything else) and resolves just those specific fragments
+  from it -- only 2 of 30 teams currently trigger this (Charlotte Hornets,
+  Miami Heat), and it's a genuinely more expensive batch (a full
+  sequential multi-year simulation per trial, not one independent season),
+  so it's only built when actually needed.
 
 ### Valuation and grading layer
 
@@ -561,26 +645,45 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 
 ## Known gaps (honest status, not hidden)
 
-- **41 of 451 pick fragments across the league don't auto-resolve** (last
-  checked, after `draft_picks_data.py` was re-synced from LD Sport's live
-  page -- see that module's docstring for the refresh process; up from 32
-  of 419 mainly because the live text turned out to have MORE precise/
-  nested swap language in a handful of cells than the prior snapshot did,
-  not because anything regressed): 26 have swap language this conservative
-  parser deliberately declines to guess at -- a per-member inline condition
-  whose real-world semantics are ambiguous from the text alone (dynamic
-  pool vs. all-or-nothing gate -- see `swap_resolver.py`'s module note), an
-  unconfirmed reordered protection, or a genuine elliptical continuation
-  fragment; 13 are cross-pick conditionals where the condition's year
-  differs from the pick's own year (still needs multiple draft years
-  correlated within the same trial, out of scope for the reason given in
-  `swap_resolver.py`); 2 don't match any known pattern. Notably, the two
-  literal "(conditional chain)" placeholders that used to sit in Denver's
-  multi-year protection chain (surfaced via OKC's traded-for Denver picks)
-  are gone now that the live refresh pulled the real notation for those
-  cells -- they still don't auto-resolve (now correctly bucketed as
-  cross-pick conditionals), but the resolver is no longer looking at a
-  placeholder. `pick_resolver.py`'s output always lists these with a
+- **Cross-year conditionals (pick's condition references a DIFFERENT
+  draft year, e.g. "MIA 1st (If 2027 MIA 1st is #15-30)" under a team's
+  2028 entry) now auto-resolve when they're a single-team, single-condition
+  fragment** -- `draft_pipeline_321.multi_year_joint_pick_number_trials`
+  runs a genuinely CORRELATED sequential simulation across every year from
+  2027 through the latest year a team's cross-year conditions reference
+  (restriction-chained via the same `advance_history` mechanism
+  `sequential_league_sim.py` uses, so trial i's outcome in one year and
+  trial i's outcome in a later year describe the same simulated world),
+  and `swap_resolver.ConditionalPick`/`resolve_conditional_pick` --
+  previously same-year only -- now take a `cond_year` and resolve either
+  case from whichever correlated batch the caller supplies. This only
+  builds the extra (more expensive) multi-year batch for a team that
+  actually has a cross-year conditional (2 of 30 teams currently: Charlotte
+  Hornets, Miami Heat) -- roughly +5s per affected team's grading run,
+  negligible against the pipeline's existing per-team cost.
+- **37 of 451 pick fragments across the league still don't auto-resolve**
+  (down from 41 before the cross-year fix above, and from 40 the day
+  before that as `draft_picks_data.py`'s live re-sync shifted a fragment's
+  wording -- see that module's docstring for the refresh process): 25 have
+  swap language this conservative parser deliberately declines to guess at
+  -- a per-member inline condition whose real-world semantics are ambiguous
+  from the text alone (dynamic pool vs. all-or-nothing gate -- see
+  `swap_resolver.py`'s module note), an unconfirmed reordered protection,
+  or a genuine elliptical continuation fragment; 10 are cross-pick
+  conditionals that are COMPOUND rather than single-team/single-condition
+  -- either a multi-clause chain of several prior years' outcomes ANDed
+  together (Denver Nuggets' and Oklahoma City Thunder's top-5-protection
+  carry-chains), a condition attached to a whole nested-swap group rather
+  than one team's plain pick (Philadelphia 76ers' 2028 entry -- on
+  inspection this one isn't even genuinely cross-year, its "(If 2028 PHI
+  1st is #1-8)" clause references the SAME year as the fragment itself,
+  self-referentially, which is a nested-swap-grammar problem, not a
+  cross-year one), or a cross-year condition nested inside a 3-4 way swap
+  comparison (Detroit Pistons', Los Angeles Clippers', and Utah Jazz's
+  shared CHA/LAC/DET/MIA/NYK swap group) -- correctly resolving these needs
+  the SEPARATE, harder generalized nested-swap-grammar extension this
+  project has deliberately not attempted rather than a guess; 2 don't match
+  any known pattern. `pick_resolver.py`'s output always lists these with a
   specific reason rather than silently guessing.
 - **Multi-year team-strength evolution is now partial, not absent.** The
   2028-2032 drafts use `darko_ratings.py`'s DARKO+longevity-evolved ratings
@@ -627,30 +730,87 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
     sportsbook lines), never keyed by any individual player's team at
     all, so there was never a DARKO-side-vs-cap-sheet-side ambiguity there
     to resolve.
-  - The DARKO-to-market fit is real but moderate (r^2 ~ 0.66 at last check,
-    reported by `darko_ratings.py`'s `__main__` -- always re-check it if the
-    input CSVs change). The single biggest miss is deep, balanced rosters
-    like Oklahoma City's: MPG-weighting a full 18-man roster dilutes a
-    stacked rotation with garbage-time bench minutes, so a team that's
-    genuinely elite by market consensus can come out looking merely
-    "above average" in DARKO-implied terms -- which shows up as a
-    conspicuous jump between that team's 2027 pick grade (real market data)
-    and its 2028+ grades (the lower DARKO-implied number). Worth a manual
-    sanity check for any team whose grades jump sharply at that boundary.
-  - Players who stay on the roster are scored at one FIXED skill value for
-    every future year, only presence (the longevity decay) varies by year.
-    That fixed value is now `player_value_regression.py`'s regression-
-    projected next-season DPM where available (404/530 players -- an
-    age/trend-aware one-step-ahead projection, not the raw prior-season
-    snapshot), but it's still only projected ONE season forward and then
-    held flat through 2028-2032 -- there's no re-projection that ages a
-    player further for each additional year out, so a player already in
-    decline is under-penalized by 2032 relative to 2028.
+  - The DARKO-to-market fit is real but moderate (r^2 ~ 0.66-0.74
+    depending on which upgrades are active, reported by `darko_ratings.py`'s
+    `__main__` -- always re-check it if the input CSVs change). The single
+    biggest miss is deep rosters like Oklahoma City's: their 2028+ grades
+    come out conspicuously lower than their 2027 (real market-data) grade.
+    **Originally attributed to MPG-weighted averaging inherently diluting a
+    stacked rotation -- investigated directly and that theory doesn't hold
+    up.** Removing OKC's 3 most implausible entries (one from
+    `darkodpmleaderboard.csv` attributes 27.1 MPG to a player not on OKC's
+    real roster at all; another gives a confirmed deep-bench/two-way
+    player 35.0 MPG, MORE than Shai Gilgeous-Alexander's 30.0) nearly
+    TRIPLES OKC's net rating (+0.75 -> +2.20) on its own -- a bigger swing
+    than any reweighting formula could plausibly produce. A league-wide
+    check found this isn't OKC-specific either: 65 cases where a player
+    listed DEEPER on a team's real depth chart (`real_rosters_202627.py`,
+    freshly synced) has meaningfully MORE projected MPG than a player
+    listed above them at the SAME position -- comparing two players both
+    confirmed on the same roster, no staleness ambiguity. This points to a
+    real, systemic data-quality issue in `darkodpmleaderboard.csv`'s own
+    MPG projections for lower-profile players, not a weighting-methodology
+    gap -- reweighting on top of it would just tune around bad inputs, the
+    same mistake this project already caught once for team attribution
+    (see `trusted_rosters.py` above). NOT YET FIXED -- scoped but not
+    built; would need a depth-chart-consistency correction to
+    `darko_ratings.load_darko_players()`'s MPG values, verified the same
+    careful way `real_rosters_202627.py`'s original corrections were.
+  - **Players who stay on the roster are now re-projected per future year,
+    not held at one fixed skill value.** `player_value_regression.py`'s
+    `project_season(years_ahead=k)` generalizes its original one-step-ahead
+    projection to any horizon; `darko_ratings.py`'s `team_net_rating` /
+    `all_teams_net_ratings` / `future_year_teams` take an optional
+    `projection_ctx` and, when given one (both `run_real_league.py` and
+    `sequential_league_sim.py` now do), score each of the 404/530 covered
+    players at THAT offset's own re-projected DPM instead of reusing the
+    2028 projection through 2032. This is still a bounded fix, not a full
+    forecast: only the age/age^2 features advance per extra year (the
+    model's own fitted rise-then-decline age curve); `most_recent_composite`
+    and `trend` stay anchored to the player's last real observed data,
+    since there's no real stat line to recompute them from further out and
+    extrapolating a slope fit from as few as 2-3 seasons multiple years
+    into the future would compound noise rather than add signal (see
+    `project_season`'s docstring). On the real fitted model, this curve's
+    effective peak lands quite young (~19) over the 318-row real training
+    set, so nearly the entire actual player pool (ages 21-41) is already
+    past it -- meaning the fix mostly shows up as ADDITIONAL decline by
+    2032 versus the old flat-hold behavior (e.g. -59 Elo for the Knicks at
+    offset 5 in one check, vs. roughly flat for young rosters), not a mix
+    of some teams up and some down. That's the honestly-reported shape of
+    this particular fit, not a forced assumption -- re-check it if the
+    underlying multi-year stats CSV changes. The 126/530 players without
+    enough multi-year history still fall back to their flat raw
+    current-season DPM at every offset, unchanged.
   - 2027 and 2033 aren't touched by this model: 2027 uses
     `market_ratings.py`'s real 2026-27 market ratings directly (the best
     signal available for the season that's actually about to happen), and
     2033 falls back to that same flat baseline since it's outside the
     5-year window.
+- **Injury/health availability is now a real, independent signal for
+  2028-2032 (games-missed rate, not injury type/severity).**
+  `player_availability_model.py` fits the same shape of regression as the
+  skill projection above (age/age^2 + trend, this time on
+  games-played history from `build_multi_year_stats.py`'s new "Games"
+  column), and `darko_ratings.py`'s `team_net_rating` now multiplies each
+  player's future-year term by their projected availability, alongside
+  (not instead of) longevity and roster continuity -- see
+  `darko_ratings._availability_for`'s docstring for why those three don't
+  double-count each other. Honest caveat, reported loudly at fit time: this
+  regression's r^2 is only 0.076 (vs. ~0.64 for skill) -- games-missed is
+  dominated by largely unpredictable acute events, which is a real finding
+  about the data, not a fit-quality bug, and is exactly why a three-tier
+  fallback exists (own last season, then a league-wide age-conditioned
+  baseline, then an unconditioned average) rather than trusting the
+  regression alone. Two real sourcing attempts were made and rejected
+  before landing here: Pro Sports Transactions sits behind active
+  Cloudflare bot-detection (declined to work around it, same as any other
+  bot-detection); the `nbainjuries` package (wraps the NBA's own official
+  injury reports, MIT-licensed) requires a Java runtime this machine
+  doesn't have, and even with Java would only give point-in-time status
+  snapshots requiring separate reconstruction into clean injury-duration
+  events, not a ready-made log. Neither gap is filled -- injury TYPE/
+  severity/chronicity still isn't modeled, only games-missed COUNT.
 - **The 3-2-1 lottery is applied uniformly to every future year (2027 and
   beyond)**, even though the league has only confirmed the format through
   the 2029 draft; 2030+ rules are pending a future Board of Governors vote.
@@ -671,6 +831,37 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
 - **No cap-holds data** (pending free agents, unsigned draft rights) --
   `cap_sheet_data.py`'s `TEAM_CAP_HOLDS` is empty; the source CSV only
   covers signed active contracts.
+- **No roster change outside the draft is modeled at all** -- trades, free
+  agency, and undrafted/international arrivals. Even `sequential_league_sim.py`'s
+  real innovation (feeding a team's ACTUALLY-drafted talent forward) still
+  assumes every OTHER player just ages/decays in place; nothing simulates
+  a team's roster changing except by winning its own picks. Of the three:
+  - **Free agency** is the most tractable piece, and partially already
+    covered -- `roster_continuity.py` already tracks WHEN a contract
+    expires from real data; what's missing is WHETHER the player re-signs
+    or leaves. Real re-signing-rate data would be needed to fit that, and
+    every real candidate source checked this round refused it: Pro Sports
+    Transactions (active Cloudflare bot-detection), Spotrac/RealGM/HoopsHype/
+    NBA.com (all explicitly name `ClaudeBot`/`anthropic-ai`/`Claude-Web` as
+    disallowed in their `robots.txt`, not just a generic anti-bot posture --
+    a consistent, deliberate industry stance, not a gap in the search).
+    ldsport.com's own "Free Agency"/"Free Agents" pages (the one site with
+    explicit owner permission) turned out to be empty placeholder stubs,
+    not populated data. The one path that remains open: the user pulling
+    a real export by hand (as a person browsing normally, not a bot) the
+    same way `Advanced Stats.xlsx` was supplied -- not yet done.
+  - **Undrafted/international/G-League arrivals** are moderately
+    tractable -- structurally the same problem `pick_outcome_model.py`
+    already solved for drafted picks (pick number -> outcome-tier
+    distribution, fit from real data), just needing an arrival-rate +
+    outcome-tier dataset for a non-drafted cohort instead. Unexplored.
+  - **Trades** are the least tractable of the three -- even a full
+    historical trade log only says WHAT happened, not WHY a team would
+    make one in a hypothetical future simulation, which needs a team
+    INCENTIVE/behavior model (cap situation, contending window), not a
+    regression target. No credible data-driven path identified; likely
+    out of scope for this project's "fit real data, don't invent
+    behavior" standard.
 - **The trade-protection ban** ("no top-12-through-15 protections on newly
   traded picks") and the **league's discretionary authority** to adjust
   odds/positions for tanking are both explicitly out of scope -- the first

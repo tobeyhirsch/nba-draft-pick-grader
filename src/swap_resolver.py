@@ -28,15 +28,33 @@ but wrong number is worse than an honest "not resolved yet"):
       within that one fragment. Qualifier must be one of the exact phrases
       in QUALIFIER_RANK below.
 
+  RESOLVED HERE, CROSS-YEAR TOO: a same-team conditional whose condition
+    references a DIFFERENT draft year (e.g. "MIA 1st (If 2027 MIA 1st is
+    #15-30)" appearing under a team's 2028 entry) is handled by the exact
+    same ConditionalPick/resolve_conditional_pick machinery as a same-year
+    one -- see ConditionalPick's docstring. The only difference is where the
+    caller sources its joint_trials from: same-year conditions read from the
+    ordinary per-year joint_pick_number_trials batch pick_resolver.py
+    already builds; cross-year ones need pick_resolver.py to instead pass a
+    multi-year CORRELATED batch (draft_pipeline_321.
+    multi_year_joint_pick_number_trials) that sequentially simulates every
+    year from 2027 through the latest year needed, restriction-chained, so
+    trial index i means "the same simulated multi-year world" across both
+    the condition's year and the fragment's own year -- an independent
+    per-year batch can't answer a cross-year question at all, since trial i
+    in one year's batch has no relationship to trial i in another year's.
+
   NOT RESOLVED HERE (categorized by reason via classify_unresolved_reason,
   left as raw text for manual handling or future work):
-    - CROSS_PICK_CONDITIONAL: the pick's existence/protection depends on a
-      DIFFERENT pick's outcome (e.g. "MIA 2nd (If 2027 DAL 1st is #1-2)"),
-      sometimes in a different draft year entirely. Resolving this correctly
-      needs multiple draft years simulated jointly for the same league (so
-      the dependency chain resolves consistently) -- the current simulator
-      only models one static-strength season at a time, so this is out of
-      scope until team strength is modeled as evolving year over year.
+    - CROSS_PICK_CONDITIONAL (residual cases only): this label now only
+      covers fragments classify_unresolved_reason sees an "(If YYYY ...)"
+      clause in that DON'T match CONDITIONAL_PICK_RE's single-team,
+      single-condition shape -- e.g. a condition attached to a whole nested
+      swap group, or a compound multi-clause condition chaining several
+      prior years together (see pick_resolver.py's classify_team_picks and
+      the project README's "Known gaps" section for real examples still
+      left unresolved this way; genuinely ambiguous multi-branch trade
+      language, not something safe to guess at generically).
     - NESTED_OR_ELLIPTICAL: fragments with a parenthesized sub-group inside
       the team list (e.g. "ATL/(CLE/UTA (Less Favorable)) (More Favorable)
       1st") or fragments that are a continuation of a PRECEDING sibling
@@ -117,22 +135,18 @@ BARE_RANGE_PROTECTED_RE = re.compile(
     r"^([A-Z]{2,3})\s+(1st|2nd)\s*\(#(\d+)-(\d+)\)$"
 )
 
-# Same-year, single-team "cross-pick conditional": TEAM's pick only exists
-# (conveys) if a DIFFERENT (or the same) team's SAME-YEAR pick lands in a
-# stated range, e.g. "CHA 2nd (If 2027 SA 1st is #1-16)" or "PHI 2nd (If
-# 2028 PHI 1st is #1-8)". Optionally combined with TEAM's own protection
-# range on top (checked only within the "conveys" branch), e.g. "BOS 2nd
-# (If #31-45) (If 2028 BOS 1st is #2-30)". RESOLVABLE when cond_year equals
-# the fragment's own draft year (both picks come from the exact same
-# simulated season, so draft_pipeline_321.joint_pick_number_trials already
-# correlates them) -- see pick_resolver.py's conditional-pick tier. A
-# DIFFERENT year (e.g. "MIA 1st (If 2027 MIA 1st is #15-30)" appearing
-# under a team's 2028 entry) still matches this regex syntactically but is
-# NOT resolved (the caller checks cond_year == year and leaves cross-year
-# matches to fall through to classify_unresolved_reason unchanged) -- that
-# needs multiple draft years correlated within the same trial, which this
-# pipeline's per-year-independent-trials design doesn't support.
-CROSS_PICK_SAME_YEAR_RE = re.compile(
+# Single-team "cross-pick conditional": TEAM's pick only exists (conveys)
+# if a DIFFERENT (or the same) team's pick in the STATED year lands in a
+# range, e.g. "CHA 2nd (If 2027 SA 1st is #1-16)" or "PHI 2nd (If 2028 PHI
+# 1st is #1-8)" (same-year) or "MIA 1st (If 2027 MIA 1st is #15-30)"
+# appearing under a team's 2028 entry (cross-year). Optionally combined
+# with TEAM's own protection range on top (checked only within the
+# "conveys" branch), e.g. "BOS 2nd (If #31-45) (If 2028 BOS 1st is #2-30)".
+# Same-year and cross-year matches are BOTH resolved by
+# ConditionalPick/resolve_conditional_pick -- see that dataclass's
+# docstring for what differs (only where the caller sources joint_trials
+# from, not the resolution logic itself).
+CONDITIONAL_PICK_RE = re.compile(
     r"^([A-Z]{2,3})\s+(1st|2nd)"
     r"(?:\s*\(If\s*#(\d+)-(\d+)\))?"                                          # optional own protection range
     r"\s*\(If\s*(\d{4})\s+([A-Z]{2,3})\s+(1st|2nd)\s+is\s*#(\d+)(?:-(\d+))?\)"  # cross-pick condition (range or single pick)
@@ -202,15 +216,25 @@ class SwapPick:
 
 @dataclass
 class ConditionalPick:
-    """A same-year, single-team cross-pick conditional -- see
-    CROSS_PICK_SAME_YEAR_RE's docstring. `team_code`'s pick conveys only in
-    trials where `cond_team_code`'s `cond_round_str` pick that same year
-    lands in [cond_lo, cond_hi]; `own_protection_range`, if set, is an
-    ADDITIONAL ordinary protection on team_code's own pick number, checked
-    only within the "it conveyed" branch."""
+    """A single-team cross-pick conditional -- see CONDITIONAL_PICK_RE's
+    docstring. `team_code`'s pick conveys only in trials where
+    `cond_team_code`'s `cond_round_str` pick in `cond_year` lands in
+    [cond_lo, cond_hi]; `own_protection_range`, if set, is an ADDITIONAL
+    ordinary protection on team_code's own pick number, checked only within
+    the "it conveyed" branch.
+
+    `cond_year` may equal `year` (same-year condition -- resolvable from an
+    ordinary single-year joint_pick_number_trials batch) or differ from it
+    (cross-year -- resolvable only from a batch where trial i's `year` and
+    `cond_year` outcomes come from the SAME simulated multi-year world, e.g.
+    draft_pipeline_321.multi_year_joint_pick_number_trials). resolve_
+    conditional_pick doesn't care which; it just indexes joint_trials by
+    both years and trusts the caller supplied a consistent source -- see
+    pick_resolver.py's build_pick_assets for how it picks the right one."""
     year: int
     team_code: str
     round_str: str
+    cond_year: int
     cond_team_code: str
     cond_round_str: str
     cond_range: Tuple[int, int]
@@ -332,20 +356,19 @@ def swap_to_pick_asset(swap: SwapPick, joint_trials: Dict[str, List[int]],
 
 def parse_conditional_pick_fragment(year: int, fragment: str) -> Optional[ConditionalPick]:
     """
-    Attempts to parse a same-year, single-team cross-pick conditional (see
-    CROSS_PICK_SAME_YEAR_RE and ConditionalPick's docstrings). Returns None
-    if the fragment doesn't match that shape AT ALL, OR if it matches but
-    the condition's year differs from `year` (a genuine cross-year
-    conditional -- caller should fall back to classify_unresolved_reason,
-    which still correctly labels it CROSS_PICK_CONDITIONAL either way).
+    Attempts to parse a single-team cross-pick conditional, same-year or
+    cross-year (see CONDITIONAL_PICK_RE and ConditionalPick's docstrings).
+    Returns None only if the fragment doesn't match that shape at all --
+    both same-year and cross-year matches are returned, distinguished by
+    ConditionalPick.cond_year vs .year. Resolving a cross-year one still
+    requires the caller to supply a multi-year correlated joint_trials
+    source (see resolve_conditional_pick) -- this function only parses.
     """
-    m = CROSS_PICK_SAME_YEAR_RE.match(fragment.strip())
+    m = CONDITIONAL_PICK_RE.match(fragment.strip())
     if not m:
         return None
 
     team_code, round_str, own_lo, own_hi, cond_year, cond_team, cond_round, cond_lo, cond_hi = m.groups()
-    if int(cond_year) != year:
-        return None  # cross-year -- not resolvable here, leave to the caller's normal fallback
     if cond_hi is None:
         cond_hi = cond_lo  # "is #1" (single pick number) rather than "is #A-B" (a range)
 
@@ -358,19 +381,28 @@ def parse_conditional_pick_fragment(year: int, fragment: str) -> Optional[Condit
 
     return ConditionalPick(
         year=year, team_code=team_code, round_str=round_str,
-        cond_team_code=cond_team, cond_round_str=cond_round,
+        cond_year=int(cond_year), cond_team_code=cond_team, cond_round_str=cond_round,
         cond_range=(int(cond_lo), int(cond_hi)),
         own_protection_range=own_protection, raw_text=fragment,
     )
 
 
-def resolve_conditional_pick(cond: ConditionalPick, joint_trials: Dict[str, Dict[str, List[int]]]
+def resolve_conditional_pick(cond: ConditionalPick,
+                              joint_trials: Dict[int, Dict[str, Dict[str, List[int]]]]
                               ) -> Tuple[Dict[int, float], float]:
     """
-    joint_trials: {team_code: {"1st": [...], "2nd": [...]}} for EXACTLY
-    cond.team_code and cond.cond_team_code, from the SAME correlated batch
-    (both picks must come from the same simulated season for the
-    conditioning to mean anything).
+    joint_trials: {year: {team_code: {"1st": [...], "2nd": [...]}}},
+    year-indexed so this same signature covers both same-year conditions
+    (cond.year == cond.cond_year -- both reads hit the same year's table)
+    and cross-year ones (they differ). EITHER way, joint_trials[cond.year]
+    and joint_trials[cond.cond_year] must come from the SAME correlated
+    batch (trial i's entries at both years must describe the same
+    simulated world) for the conditioning to mean anything -- an ordinary
+    single-year joint_pick_number_trials batch naturally satisfies this
+    for the same-year case (there's only one year in play); a cross-year
+    case needs draft_pipeline_321.multi_year_joint_pick_number_trials
+    instead. This function doesn't check which kind it got -- see
+    pick_resolver.py's build_pick_assets for how it picks the right one.
 
     Returns (conditioned_distribution, convey_probability):
       conditioned_distribution: {pick_number: probability}, normalized over
@@ -379,8 +411,8 @@ def resolve_conditional_pick(cond: ConditionalPick, joint_trials: Dict[str, Dict
       convey_probability: fraction of all trials where the condition held
         -- pass as PickAsset.convey_probability.
     """
-    cond_values = joint_trials[cond.cond_team_code][cond.cond_round_str]
-    target_values = joint_trials[cond.team_code][cond.round_str]
+    cond_values = joint_trials[cond.cond_year][cond.cond_team_code][cond.cond_round_str]
+    target_values = joint_trials[cond.year][cond.team_code][cond.round_str]
     n_trials = len(cond_values)
     if len(target_values) != n_trials:
         raise ValueError("joint_trials lists must all be the same length (same trial batch)")
@@ -402,15 +434,18 @@ def resolve_conditional_pick(cond: ConditionalPick, joint_trials: Dict[str, Dict
     return dist, convey_probability
 
 
-def conditional_pick_to_asset(cond: ConditionalPick, joint_trials: Dict[str, Dict[str, List[int]]],
+def conditional_pick_to_asset(cond: ConditionalPick, joint_trials: Dict[int, Dict[str, Dict[str, List[int]]]],
                                current_year: int = 2026, fallback_value: float = 0.0) -> PickAsset:
-    """Resolves a ConditionalPick against a joint-trial batch and wraps the
-    result as a gradable PickAsset."""
+    """Resolves a ConditionalPick against a year-indexed joint-trial batch
+    (see resolve_conditional_pick) and wraps the result as a gradable
+    PickAsset."""
     dist, convey_probability = resolve_conditional_pick(cond, joint_trials)
     protection_note = f", own protection {cond.own_protection_range}" if cond.own_protection_range else ""
-    label = (f"{cond.year} {cond.team_code} {cond.round_str} (conveys only if {cond.cond_team_code} "
+    cond_year_note = f"{cond.cond_year} " if cond.cond_year != cond.year else ""
+    resolved_kind = "conditional-resolved" if cond.cond_year == cond.year else "cross-year-conditional-resolved"
+    label = (f"{cond.year} {cond.team_code} {cond.round_str} (conveys only if {cond_year_note}{cond.cond_team_code} "
              f"{cond.cond_round_str} is #{cond.cond_range[0]}-{cond.cond_range[1]}{protection_note}, "
-             f"conditional-resolved)")
+             f"{resolved_kind})")
     years_away = max(0, cond.year - current_year)
     if convey_probability == 0.0:
         return PickAsset(label=label, pick_probabilities={0: 1.0}, convey_probability=0.0,

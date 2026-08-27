@@ -244,6 +244,22 @@ def build_pick_assets(team_name: str,
         Pass `teams_by_year` to override specific years with their own
         evolved ratings instead.
 
+    CROSS-YEAR CONDITIONALS: a conditional_picks entry whose condition
+    references a DIFFERENT year than the fragment itself (e.g. "MIA 1st
+    (If 2027 MIA 1st is #15-30)" under a team's 2028 entry) can't be
+    resolved from `joint_tables` (each year's batch has its own independent
+    RNG draws -- trial i in one year has no relationship to trial i in
+    another). When `teams_for_simulation` is given, this function instead
+    builds ONE additional draft_pipeline_321.multi_year_joint_pick_number_
+    trials() batch per team, correlated from 2027 through the latest year
+    any of that team's cross-year conditions reference, and resolves those
+    specific fragments from it -- using the SAME teams_by_year/history_by_
+    year[2027] inputs as everything else, so it stays consistent with how
+    every other fragment in the same portfolio is resolved. This is a
+    SEPARATE, more expensive batch than the ordinary per-year one (a full
+    sequential multi-year simulation per trial, not one independent season)
+    -- only built when a team actually has a cross-year conditional.
+
     Returns (assets, unresolved) -- assets are ready to grade via
     pick_grading.grade_pick_portfolio(); unresolved lists everything that
     still needs a simulation league, multi-year modeling, or manual
@@ -301,6 +317,34 @@ def build_pick_assets(team_name: str,
                 batch_cache[cache_key] = {c: joint[TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
             joint_tables[year] = batch_cache[cache_key]
 
+    # {year: {code: {"1st": [...], "2nd": [...]}}}, correlated ACROSS years
+    # (unlike joint_tables above, which is per-year independent) -- only
+    # built when this team actually has a cross-year conditional, since
+    # it's a separate, more expensive sequential-multi-year batch. See
+    # build_pick_assets's "CROSS-YEAR CONDITIONALS" docstring section.
+    multi_year_table: Dict[int, Dict[str, Dict[str, List[int]]]] = {}
+    cross_year_conditionals = [c for c in conditional_picks if c.cond_year != c.year]
+    if teams_for_simulation and cross_year_conditionals:
+        from draft_pipeline_321 import multi_year_joint_pick_number_trials
+
+        start_year = 2027
+        end_year = max(max(c.year, c.cond_year) for c in cross_year_conditionals)
+        full_teams_by_year = {y: (teams_by_year or {}).get(y, teams_for_simulation)
+                               for y in range(start_year, end_year + 1)}
+        if history_by_year is not None:
+            base_hist = history_by_year.get(start_year)
+        else:
+            # LEGACY fallback -- see `history` param docstring.
+            base_hist = history if (history is not None and start_year == 2027) else None
+        multi_year_raw = multi_year_joint_pick_number_trials(
+            full_teams_by_year, needed_names, start_year=start_year, end_year=end_year,
+            trials=trials, seed=seed, base_history=base_hist,
+        )
+        multi_year_table = {
+            y: {c: multi_year_raw[y][TEAM_ABBREV_TO_NAME[c]] for c in needed_codes}
+            for y in multi_year_raw
+        }
+
     def marginal_distribution_for(code: str, round_str: str, year: int) -> Optional[Dict[int, float]]:
         table = joint_tables.get(year, {})
         if code in table:
@@ -355,15 +399,27 @@ def build_pick_assets(team_name: str,
         assets.append(swap_to_pick_asset(swap, round_trials, current_year=current_year,
                                           fallback_value=fallback_value))
 
-    # --- Tier 3: same-year cross-pick conditionals (need the joint tables too) ---
+    # --- Tier 3: cross-pick conditionals, same-year and cross-year ---
+    # Same-year (cond.cond_year == cond.year) reads from the ordinary
+    # per-year joint_tables -- resolve_conditional_pick indexes it by both
+    # cond.year and cond.cond_year, which are the same key here, so this is
+    # unchanged from before cross-year support existed. Cross-year reads
+    # from the separate correlated multi_year_table built above instead --
+    # joint_tables structurally can't answer a cross-year question (each
+    # year in it is an independent, uncorrelated batch).
     for cond in conditional_picks:
-        table = joint_tables.get(cond.year, {})
-        if cond.team_code not in table or cond.cond_team_code not in table:
-            unresolved.append((cond.year, cond.raw_text,
-                                "cross-pick conditional parsed but no simulation league was provided "
-                                "(pass teams_for_simulation to resolve it)"))
+        is_cross_year = cond.cond_year != cond.year
+        source = multi_year_table if is_cross_year else joint_tables
+        target_table = source.get(cond.year, {})
+        cond_table = source.get(cond.cond_year, {})
+        if cond.team_code not in target_table or cond.cond_team_code not in cond_table:
+            reason = ("cross-year conditional parsed but no simulation league was provided "
+                      "(pass teams_for_simulation to resolve it)") if is_cross_year else (
+                      "cross-pick conditional parsed but no simulation league was provided "
+                      "(pass teams_for_simulation to resolve it)")
+            unresolved.append((cond.year, cond.raw_text, reason))
             continue
-        assets.append(conditional_pick_to_asset(cond, table, current_year=current_year,
+        assets.append(conditional_pick_to_asset(cond, source, current_year=current_year,
                                                  fallback_value=fallback_value))
 
     # --- Tier 4: nested swaps (need the joint tables too) ---
@@ -383,13 +439,15 @@ def build_pick_assets(team_name: str,
 
 if __name__ == "__main__":
     print("=== Tier breakdown across all 30 teams (no simulation league) ===")
-    totals = {"simple": 0, "swap_parsed": 0, "conditional_parsed": 0, "nested_parsed": 0, "unresolved": 0}
+    totals = {"simple": 0, "swap_parsed": 0, "conditional_parsed": 0, "conditional_cross_year": 0,
+              "nested_parsed": 0, "unresolved": 0}
     reason_counts: Dict[str, int] = {}
     for team in TEAM_FUTURE_PICKS:
         simple, swaps, conditionals, nested, unresolved = classify_team_picks(team)
         totals["simple"] += len(simple)
         totals["swap_parsed"] += len(swaps)
         totals["conditional_parsed"] += len(conditionals)
+        totals["conditional_cross_year"] += sum(1 for c in conditionals if c.cond_year != c.year)
         totals["nested_parsed"] += len(nested)
         totals["unresolved"] += len(unresolved)
         for _, _, reason in unresolved:
@@ -397,7 +455,9 @@ if __name__ == "__main__":
 
     print(f"Simple (known slot, bare future, or protected future): {totals['simple']}")
     print(f"Swap fragments parsed (need a simulation league to resolve): {totals['swap_parsed']}")
-    print(f"Same-year cross-pick conditionals parsed (need a simulation league to resolve): {totals['conditional_parsed']}")
+    print(f"Cross-pick conditionals parsed (need a simulation league to resolve): {totals['conditional_parsed']} "
+          f"(of which cross-year, need teams_for_simulation to build the extra correlated multi-year batch: "
+          f"{totals['conditional_cross_year']})")
     print(f"Nested swap fragments parsed (need a simulation league to resolve): {totals['nested_parsed']}")
     print(f"Still unresolved: {totals['unresolved']}")
     print("\nUnresolved breakdown by reason:")

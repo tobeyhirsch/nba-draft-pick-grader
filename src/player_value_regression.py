@@ -29,6 +29,20 @@ to validate the feature-engineering/regression mechanics in isolation from
 whatever the real data happens to contain in a given run -- that path
 still runs and still matters, it's just no longer the only path.
 
+YEAR-BY-YEAR RE-PROJECTION (project_season / ProjectionContext /
+load_projection_context): darko_ratings.py used to take this module's
+one-step-ahead projection and hold it FLAT across every future draft year
+(2028 through 2032 all scored a player at their projected-2027 DPM).
+project_season(seasons, model, years_ahead=k) generalizes the original
+next-season-only projection to any horizon: age/age^2 advance by
+(years_ahead-1) extra years (the model's own fitted rise-then-decline age
+curve), while most_recent_composite/trend stay anchored to the player's
+last real observed data -- see that function's docstring for why trend
+isn't also extrapolated. ProjectionContext bundles a fitted model with the
+training history so a caller can request any player's DPM at any
+years_ahead on demand; darko_ratings.py now does this per offset instead
+of reusing one fixed value everywhere.
+
 EXPECTED INPUT SCHEMA (for when real data arrives):
   A CSV with one row per (player, season) -- required columns:
     Player       -- full name, spelled exactly like darkodpmleaderboard.csv
@@ -269,18 +283,85 @@ def fit_regression(by_player: Dict[str, List[SeasonStat]]) -> RegressionModel:
                             r_squared=r_squared, n_training_rows=len(y))
 
 
-def project_next_season(seasons: List[SeasonStat], model: RegressionModel) -> Optional[float]:
+def project_season(seasons: List[SeasonStat], model: RegressionModel, years_ahead: int = 1) -> Optional[float]:
     """
-    Projects the NEXT season's DPM for a player from their full available
-    history using the fitted model. Returns None if the player has fewer
-    than MIN_HISTORY_SEASONS seasons on file (not enough to build the
-    trend feature) -- callers fall back to the player's raw current-season
-    DPM in that case (see load_darko_players_with_projection below).
+    Projects DPM `years_ahead` seasons beyond the player's last season on
+    file. years_ahead=1 is the immediate next season (the original
+    project_next_season behavior: age/composite/trend all taken as-is from
+    build_features). Returns None if the player has fewer than
+    MIN_HISTORY_SEASONS seasons on file (not enough to build the trend
+    feature) -- callers fall back to the player's raw current-season DPM in
+    that case (see load_darko_players_with_projection below).
+
+    For years_ahead > 1 (used by darko_ratings.py to re-project a player's
+    skill for EACH of the 2028-2032 draft years individually, instead of
+    holding the one-step-ahead projection flat across all of them -- see
+    that module's "Players who stay on the roster..." caveat): only the
+    age/age^2 features advance, by (years_ahead - 1) extra years, matching
+    this module's existing "age of the season BEFORE the one being
+    predicted" training convention. most_recent_composite and trend stay
+    anchored to the player's last REAL observed data -- there is no real
+    stat line to recompute them from further out, and recursively feeding
+    a prior projection back in as a pseudo-observation would compound a
+    slope fit from as few as 2-3 points multiple years into the future,
+    which is exactly the kind of over-precise guess this project avoids
+    elsewhere (see calibrate_pick_value.py, darko_ratings.py's MAX_OFFSET
+    cap). This intentionally only captures the model's fitted rise-then-
+    decline AGE curve for further-out years, not a further-extrapolated
+    skill trend -- a real limitation, not a hidden one.
     """
     if len(seasons) < MIN_HISTORY_SEASONS:
         return None
+    if years_ahead < 1:
+        raise ValueError(f"years_ahead must be >= 1, got {years_ahead}")
     feats = build_features(seasons, model.norm)
+    if years_ahead > 1:
+        feats = dict(feats)
+        feats["age"] = feats["age"] + (years_ahead - 1)
+        feats["age_squared"] = feats["age"] ** 2
     return model.predict(feats)
+
+
+def project_next_season(seasons: List[SeasonStat], model: RegressionModel) -> Optional[float]:
+    """Backward-compatible alias for project_season(seasons, model, years_ahead=1)."""
+    return project_season(seasons, model, years_ahead=1)
+
+
+@dataclass
+class ProjectionContext:
+    """Bundles a fitted RegressionModel with the multi-year history it was
+    fit from, so a caller (darko_ratings.py) can request a given player's
+    DPM at any years_ahead horizon on demand, rather than being handed one
+    fixed projected value up front."""
+    model: RegressionModel
+    by_player: Dict[str, List[SeasonStat]]
+
+    def dpm_at(self, player: str, years_ahead: int) -> Optional[float]:
+        seasons = self.by_player.get(player)
+        if not seasons:
+            return None
+        return project_season(seasons, self.model, years_ahead=years_ahead)
+
+
+def load_projection_context(multi_year_csv: str) -> Optional["ProjectionContext"]:
+    """
+    Loads multi_year_csv (schema at the top of this module) and fits a
+    RegressionModel against every player with enough history, returning a
+    ProjectionContext callers can query at any years_ahead horizon. Returns
+    None if the file has no usable player (nothing to fit) -- callers
+    should fall back to flat/unprojected behavior in that case, same as
+    load_darko_players_with_projection does.
+    """
+    by_player = load_multi_year_stats(multi_year_csv)
+    usable = {p: seasons for p, seasons in by_player.items() if len(seasons) > MIN_HISTORY_SEASONS}
+    if not usable:
+        print(f"[player_value_regression] {multi_year_csv!r} has no player with more than "
+              f"{MIN_HISTORY_SEASONS} seasons on file -- nothing to train on.")
+        return None
+    model = fit_regression(usable)
+    print(f"[player_value_regression] fit against {model.n_training_rows} player-season training "
+          f"row(s), r^2={model.r_squared:.3f} -- {'trust this' if model.n_training_rows >= 200 else 'TREAT WITH CAUTION, very few training rows'}")
+    return ProjectionContext(model=model, by_player=by_player)
 
 
 def load_darko_players_with_projection(multi_year_csv: Optional[str] = None,
@@ -314,23 +395,14 @@ def load_darko_players_with_projection(multi_year_csv: Optional[str] = None,
     if multi_year_csv is None:
         return players
 
-    by_player = load_multi_year_stats(multi_year_csv)
-    usable = {p: seasons for p, seasons in by_player.items() if len(seasons) > MIN_HISTORY_SEASONS}
-    if not usable:
-        print(f"[player_value_regression] {multi_year_csv!r} has no player with more than "
-              f"{MIN_HISTORY_SEASONS} seasons on file -- nothing to train on, falling back to "
-              f"raw current-season DPM for every player.")
+    ctx = load_projection_context(multi_year_csv)
+    if ctx is None:
         return players
-
-    model = fit_regression(usable)
-    print(f"[player_value_regression] fit against {model.n_training_rows} player-season training "
-          f"row(s), r^2={model.r_squared:.3f} -- {'trust this' if model.n_training_rows >= 200 else 'TREAT WITH CAUTION, very few training rows'}")
 
     upgraded = 0
     result = []
     for p in players:
-        seasons = by_player.get(p.name)
-        projected = project_next_season(seasons, model) if seasons else None
+        projected = ctx.dpm_at(p.name, years_ahead=1)
         if projected is not None:
             result.append(DarkoPlayer(name=p.name, team=p.team, dpm=projected,
                                        mpg=p.mpg, longevity_by_offset=p.longevity_by_offset))
@@ -410,3 +482,12 @@ if __name__ == "__main__":
     upgraded = load_darko_players_with_projection(multi_year_csv=None)
     identical = [b.dpm for b in baseline] == [u.dpm for u in upgraded]
     print(f"load_darko_players_with_projection(None) matches load_darko_players() exactly: {identical}")
+
+    print("\n--- Year-by-year re-projection (project_season, years_ahead=1..6) ---")
+    print("Ascending/Prime/Declining should visibly diverge further out, not stay flat:")
+    print(f"{'Player':<26}" + "".join(f"{'+' + str(k) + 'y':>9}" for k in range(1, 7)))
+    for name, seasons in by_player.items():
+        if not (name.endswith(" 1")):
+            continue  # one representative per archetype is enough to show the shape
+        row = [project_season(seasons, model, years_ahead=k) for k in range(1, 7)]
+        print(f"{name:<26}" + "".join(f"{v:>9.2f}" for v in row))

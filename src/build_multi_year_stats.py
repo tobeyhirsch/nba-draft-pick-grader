@@ -54,16 +54,35 @@ today and means the data isn't thrown away -- extending the composite/
 FEATURE_NAMES to actually use it is a follow-up if wanted, not done here
 so as not to silently change the fitted model's behavior/coefficients
 without that being an explicit decision.
+
+AVAILABILITY DATA ("Games" column, added for player_availability_model.py):
+the PER/VORP/BPM sheets also carry Basketball-Reference's "G" (games
+played) column, extracted here the same way as Age/BPM/VORP/PER -- with
+ONE deliberate difference in which row it's read from. Age/BPM/VORP/PER
+are read from a player's FIRST single-team row for a season (existing
+convention above) -- for a player traded mid-season, that's a PARTIAL-
+season figure, an accepted pre-existing limitation of this script. Games
+is instead read from that player's "TOT"/"2TM"/"3TM"/"4TM" rollup row when
+one exists (their TRUE full-season games-played total, spanning every
+team that season), falling back to the single-team row's own G only when
+there's no rollup row (an untraded player -- their one row already IS the
+season total). Reusing the single-team-row convention for Games too would
+silently misrepresent a mid-season TRADE as a chunk of missed games,
+which would be a real correctness bug for the specific thing this column
+exists to measure (injury/health availability, not roster churn) -- see
+player_availability_model.py.
 """
 
 import csv
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import openpyxl
 
 from name_matching import normalize_name
 
-XLSX_PATH = "/root/.claude/uploads/546919a0-f99b-590f-be84-ef42a59fcd31/ec59b95e-Advanced_Stats.xlsx"
+# One-time conversion input, supplied locally by the user (not a repo
+# asset) -- update this path if the file moves.
+XLSX_PATH = "/Users/tobeyhirsch/Downloads/Advanced Stats.xlsx"
 OUTPUT_CSV = "data/multi_year_advanced_stats.csv"
 
 SEASON_SHEETS = [
@@ -100,18 +119,38 @@ def load_dpm_sheet(wb, sheet_name: str) -> Dict[str, Tuple[str, float]]:
     return out
 
 
-def load_per_vorp_bpm_sheet(wb, sheet_name: str) -> Dict[str, Tuple[float, float, float, float]]:
-    """{Player (PER/VORP/BPM-sheet spelling): (Age, BPM, VORP, PER)}"""
+def load_per_vorp_bpm_sheet(wb, sheet_name: str) -> Dict[str, Tuple[float, float, float, float, int]]:
+    """
+    {Player (PER/VORP/BPM-sheet spelling): (Age, BPM, VORP, PER, Games)}.
+    Age/BPM/VORP/PER come from the player's first single-team row (see
+    module docstring -- partial-season for a traded player, an accepted
+    existing limitation). Games comes from their TOT/2TM/3TM/4TM rollup
+    row when one exists (true full-season total), else the single-team
+    row's own G -- see module docstring's "AVAILABILITY DATA" section for
+    why this sourcing rule deliberately differs from the other four fields.
+    """
     ws = wb[sheet_name]
     lines = [row[0] for row in ws.iter_rows(min_row=1, values_only=True) if row and row[0]]
-    out = {}
+
+    single_team: Dict[str, Tuple[float, float, float, float, int]] = {}
+    rollup_games: Dict[str, int] = {}
     for row in csv.DictReader(lines):
         name = row.get("Player")
         if not name or name == "Player":  # repeated header row
             continue
+        name = name.strip()
         team = row.get("Team")
-        if not team or team in ("TOT", "2TM", "3TM", "4TM"):  # multi-team rollup row
+        if not team:
             continue
+        try:
+            games = int(row["G"])
+        except (ValueError, TypeError):
+            continue
+
+        if team in ("TOT", "2TM", "3TM", "4TM"):
+            rollup_games.setdefault(name, games)  # first rollup row wins, matches single-team convention
+            continue
+
         try:
             age = float(row["Age"])
             bpm = float(row["BPM"])
@@ -119,12 +158,16 @@ def load_per_vorp_bpm_sheet(wb, sheet_name: str) -> Dict[str, Tuple[float, float
             per = float(row["PER"])
         except (ValueError, TypeError):
             continue
-        out.setdefault(name.strip(), (age, bpm, vorp, per))  # first (single-team) row wins
-    return out
+        single_team.setdefault(name, (age, bpm, vorp, per, games))  # first single-team row wins
+
+    return {
+        name: (age, bpm, vorp, per, rollup_games.get(name, own_games))
+        for name, (age, bpm, vorp, per, own_games) in single_team.items()
+    }
 
 
 def build_rows(wb):
-    """Yields (Player, Team, Season, Age, DARKO_DPM, BPM, VORP, PER) rows; also returns per-season skip diagnostics."""
+    """Yields (Player, Team, Season, Age, DARKO_DPM, BPM, VORP, PER, Games) rows; also returns per-season skip diagnostics."""
     all_rows = []
     diagnostics = []
     for dpm_sheet, pv_sheet, season in SEASON_SHEETS:
@@ -140,8 +183,8 @@ def build_rows(wb):
             if stats is None:
                 skipped.append(player)
                 continue
-            age, bpm, vorp, per = stats
-            all_rows.append((player, team, season, age, darko_dpm, bpm, vorp, per))
+            age, bpm, vorp, per, games = stats
+            all_rows.append((player, team, season, age, darko_dpm, bpm, vorp, per, games))
             matched += 1
         diagnostics.append((season, len(dpm), matched, skipped))
     return all_rows, diagnostics
@@ -161,9 +204,9 @@ def main():
 
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Player", "Team", "Season", "Age", "DARKO_DPM", "BPM", "VORP", "PER"])
-        for player, team, season, age, darko_dpm, bpm, vorp, per in rows:
-            writer.writerow([player, team, season, age, darko_dpm, bpm, vorp, per])
+        writer.writerow(["Player", "Team", "Season", "Age", "DARKO_DPM", "BPM", "VORP", "PER", "Games"])
+        for player, team, season, age, darko_dpm, bpm, vorp, per, games in rows:
+            writer.writerow([player, team, season, age, darko_dpm, bpm, vorp, per, games])
 
     print(f"\nWrote {len(rows)} player-season rows to {OUTPUT_CSV}")
     n_players = len({r[0] for r in rows})
