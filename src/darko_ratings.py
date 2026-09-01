@@ -148,6 +148,7 @@ from roster_continuity import continuity as contract_continuity
 from trusted_rosters import trusted_team_for
 from player_value_regression import ProjectionContext
 from player_availability_model import AvailabilityContext
+from real_mpg import real_mpg_for
 
 DPM_CSV = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
 LONGEVITY_CSV = find_data_file("darkolongevityprojections.csv", os.path.dirname(os.path.abspath(__file__)))
@@ -203,6 +204,7 @@ def load_darko_players(dpm_csv: str = DPM_CSV, longevity_csv: str = LONGEVITY_CS
 
     players = []
     reassigned = 0
+    mpg_overridden = 0
     for key, drow in dpm_rows.items():
         lrow = lon_rows[key]
         longevity = {i: float(lrow[f"+{i}"]) for i in range(1, 16)}
@@ -215,17 +217,31 @@ def load_darko_players(dpm_csv: str = DPM_CSV, longevity_csv: str = LONGEVITY_CS
         team = real_team if real_team is not None else darko_team
         if real_team is not None and real_team != darko_team:
             reassigned += 1
+        # MPG OVERRIDE -- see real_mpg.py's module docstring. DARKO's own
+        # MPG is a projection with no rotation-context input, and its own
+        # documentation admits minutes are its weakest output; real_mpg.py's
+        # observed 2025-26 minutes replace it wherever a name match exists
+        # (518/530 players), falling back to DARKO's projection only for
+        # the rest (mostly incoming rookies with no 2025-26 NBA games).
+        real_mpg = real_mpg_for(drow["Player"])
+        mpg = real_mpg if real_mpg is not None else float(drow["MPG"])
+        if real_mpg is not None:
+            mpg_overridden += 1
         players.append(DarkoPlayer(
             name=drow["Player"],
             team=team,
             dpm=_parse_dpm(drow["DPM"]),
-            mpg=float(drow["MPG"]),
+            mpg=mpg,
             longevity_by_offset=longevity,
         ))
     if reassigned:
         print(f"[darko_ratings] re-keyed {reassigned}/{len(players)} players' team onto "
               f"real_rosters_202627.py/PlayerSalariesCSV.csv's trusted assignment "
               f"(darkodpmleaderboard.csv's own Team column disagreed) -- see trusted_rosters.py")
+    if mpg_overridden:
+        print(f"[darko_ratings] overrode {mpg_overridden}/{len(players)} players' MPG with real "
+              f"observed 2025-26 minutes (darkodpmleaderboard.csv's own MPG is a projection, its "
+              f"weakest output per DARKO's own documentation) -- see real_mpg.py")
     return players
 
 

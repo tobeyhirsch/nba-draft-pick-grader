@@ -158,6 +158,13 @@ see that module's bullet below. (2) `real_rosters_202627.py` and
   `run_real_league.MULTI_YEAR_STATS_CSV` points at, feeding BOTH
   `player_value_regression.py` (skill) and `player_availability_model.py`
   (games-missed rate).
+- **`real_mpg_2025_26.csv`** -- real, OBSERVED per-game minutes for 582
+  players from the CONCLUDED 2025-26 season (`Player, MP, Games`). Built
+  by `build_real_mpg.py` from a user-supplied Basketball-Reference "Per
+  Game" export (`NBA Player Data 2026.xlsx`) -- another one-time converter,
+  re-run it if a newer export is supplied. Used by `real_mpg.py` to
+  override `darkodpmleaderboard.csv`'s own (projected, and shown to be
+  materially less reliable) MPG column -- see that module's bullet below.
 - **`conferences.py`** -- static East/West assignment for all 30 teams.
 - **`draft_picks_data.py`** -- every team's pick ownership, 2027-2033, as
   raw text sourced from LD Sport (credited to ESPN) -- e.g. `"MIL/NO (Less
@@ -275,9 +282,12 @@ see that module's bullet below. (2) `real_rosters_202627.py` and
   data, not a DARKO sum, is used as-is for that one season.
 - **`darko_ratings.py`** -- projects team strength for the 2028-2032 drafts,
   which the market hasn't priced. Builds each team's MPG-weighted DARKO net
-  rating, fits a linear regression against `market_ratings.py`'s Elo (r^2
-  reported by its `__main__` -- check it before trusting anything
-  downstream), then re-derives that net rating per future year by
+  rating -- MPG itself now real, observed 2025-26 minutes wherever
+  `real_mpg.py` covers a player (518/530), not DARKO's own projected MPG,
+  a real fit-improving correction (see "Known gaps" below) -- fits a
+  linear regression against `market_ratings.py`'s Elo (r^2 reported by its
+  `__main__` -- check it before trusting anything downstream), then
+  re-derives that net rating per future year by
   multiplying each player's contribution by TWO independent 0-1 signals:
   their career-longevity probability at that year (still an NBA player
   ANYWHERE) and, new this round, their `roster_continuity.py` weight
@@ -383,6 +393,26 @@ see that module's bullet below. (2) `real_rosters_202627.py` and
   improvements (fixing the mislabeling made the model fit the real market
   better, which is exactly what you'd hope a correction does), though
   modest in size.
+- **`build_real_mpg.py`** -- one-time converter: turns a user-supplied
+  Basketball-Reference "Per Game" export for the CONCLUDED 2025-26 season
+  (`NBA Player Data 2026.xlsx`, same single-column-pasted-CSV quirk as
+  `build_multi_year_stats.py`'s PER/VORP/BPM sheets) into `data/real_mpg_2025_26.csv`
+  (`Player, MP, Games`, 582 players). Same TOT/2TM/3TM/4TM rollup-row
+  preference as `build_multi_year_stats.py`'s `Games` column, for the same
+  reason -- a traded player's true season-long average shouldn't be read
+  from one partial stint.
+- **`real_mpg.py`** -- NEW, LIVE: replaces `darkodpmleaderboard.csv`'s own
+  MPG (a PROJECTION -- DARKO's own documentation admits playing-time
+  projections are its weakest output, with no access to real team
+  rotation/depth-chart context at all) with real, OBSERVED 2025-26
+  minutes wherever `data/real_mpg_2025_26.csv` covers a player.
+  `darko_ratings.load_darko_players()` calls `real_mpg_for()` for every
+  player and overrides `DarkoPlayer.mpg` wherever covered (518/530, 98%),
+  falling back to DARKO's own projected MPG for the rest (mostly incoming
+  rookies with no 2025-26 NBA games) -- same "strict upgrade, never a
+  data loss" convention as `trusted_rosters.py`'s team re-keying. This is
+  what fixed the Oklahoma City / "stacked roster" gap below -- see that
+  bullet for the discovery and the validated fit improvement.
 - **`name_matching.py`** -- shared `normalize_name()` (strips diacritics,
   periods, apostrophes, and Jr./Sr./II/III/IV suffixes) used by
   `build_multi_year_stats.py`, `roster_continuity.py`, and
@@ -730,32 +760,37 @@ assumption; see `darko_ratings.py`'s docstring for the full reasoning.
     sportsbook lines), never keyed by any individual player's team at
     all, so there was never a DARKO-side-vs-cap-sheet-side ambiguity there
     to resolve.
-  - The DARKO-to-market fit is real but moderate (r^2 ~ 0.66-0.74
-    depending on which upgrades are active, reported by `darko_ratings.py`'s
-    `__main__` -- always re-check it if the input CSVs change). The single
-    biggest miss is deep rosters like Oklahoma City's: their 2028+ grades
-    come out conspicuously lower than their 2027 (real market-data) grade.
-    **Originally attributed to MPG-weighted averaging inherently diluting a
-    stacked rotation -- investigated directly and that theory doesn't hold
-    up.** Removing OKC's 3 most implausible entries (one from
-    `darkodpmleaderboard.csv` attributes 27.1 MPG to a player not on OKC's
-    real roster at all; another gives a confirmed deep-bench/two-way
-    player 35.0 MPG, MORE than Shai Gilgeous-Alexander's 30.0) nearly
-    TRIPLES OKC's net rating (+0.75 -> +2.20) on its own -- a bigger swing
-    than any reweighting formula could plausibly produce. A league-wide
-    check found this isn't OKC-specific either: 65 cases where a player
-    listed DEEPER on a team's real depth chart (`real_rosters_202627.py`,
-    freshly synced) has meaningfully MORE projected MPG than a player
-    listed above them at the SAME position -- comparing two players both
-    confirmed on the same roster, no staleness ambiguity. This points to a
-    real, systemic data-quality issue in `darkodpmleaderboard.csv`'s own
-    MPG projections for lower-profile players, not a weighting-methodology
-    gap -- reweighting on top of it would just tune around bad inputs, the
-    same mistake this project already caught once for team attribution
-    (see `trusted_rosters.py` above). NOT YET FIXED -- scoped but not
-    built; would need a depth-chart-consistency correction to
-    `darko_ratings.load_darko_players()`'s MPG values, verified the same
-    careful way `real_rosters_202627.py`'s original corrections were.
+  - **FIXED: `darkodpmleaderboard.csv`'s own projected MPG has been
+    replaced with real, OBSERVED 2025-26 minutes.** This started as an
+    investigation into deep rosters like Oklahoma City's grading
+    conspicuously lower for 2028+ than their 2027 (real market-data)
+    grade -- originally attributed to MPG-weighted averaging inherently
+    diluting a stacked rotation, which turned out to be the wrong theory.
+    Cross-checking `darkodpmleaderboard.csv`'s MPG against
+    `real_rosters_202627.py`'s real depth-chart order found 65
+    within-position-group inversions league-wide (a player listed DEEPER
+    on a team's real depth chart projected for meaningfully MORE minutes
+    than one listed above them, both confirmed on the same roster -- e.g.
+    OKC's Brooks Barnhizer, a confirmed depth-chart fringe/two-way player,
+    projected at 35.0 MPG, MORE than Shai Gilgeous-Alexander's 30.0). This
+    traced to a real, admitted limitation of the source, not a one-off
+    error: DARKO's own documentation states playing-time projections are
+    its weakest output, and it has no access to real team rotation/depth-
+    chart context at all. `real_mpg.py` (built from a user-supplied
+    Basketball-Reference "Per Game" export for the CONCLUDED 2025-26
+    season -- real games actually played, not a projection) now overrides
+    DARKO's MPG for every player it covers (518/530, 98%), falling back to
+    DARKO's own projection only for the rest (mostly incoming rookies with
+    no 2025-26 NBA games) -- see `darko_ratings.load_darko_players()`. The
+    result: Barnhizer's real 2025-26 average was 8.7 MPG (not 35.0);
+    OKC's net rating moved from +0.75 to +1.21; and -- the real validation,
+    same test that confirmed `trusted_rosters.py`'s fix -- the
+    DARKO-to-market Elo fit improved from r^2~=0.74 to **r^2~=0.79**, the
+    single largest jump of any correction made to this model. A real
+    2025-26 average is itself an imperfect stand-in for 2026-27 role
+    (trades, coaching changes, and injuries can shift a player's minutes
+    year to year), but it's real, observed data, categorically more
+    reliable than a projection system that admits this is its weak point.
   - **Players who stay on the roster are now re-projected per future year,
     not held at one fixed skill value.** `player_value_regression.py`'s
     `project_season(years_ahead=k)` generalizes its original one-step-ahead
