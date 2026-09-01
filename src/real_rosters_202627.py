@@ -24,7 +24,7 @@ LeBron James from every roster and misassigned Johni Broome to the wrong
 team; a smaller-batch retry reproduced both correctly). Every refresh is
 diffed against the current contents of this dict and changes are reviewed
 before being applied -- this file is never silently overwritten.
-Last synced: 2026-08-27 (see ldsport_refresh_depth_charts_v2.py for the
+Last synced: 2026-09-01 (see ldsport_refresh_depth_charts_v2.py for the
 raw fetch this sync was built from). That refresh found the roster
 unchanged except for one addition: Felix Okpara (R) added to the Washington
 Wizards center rotation, which also resolves the previous placeholder note
