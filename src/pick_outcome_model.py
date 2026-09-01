@@ -62,7 +62,7 @@ onward. Also a judgment call, not fit from data.
 """
 
 import random
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 TIERS = ["Superstar", "Star/All-Star", "Above-average starter", "Contributor", "Bust"]
 

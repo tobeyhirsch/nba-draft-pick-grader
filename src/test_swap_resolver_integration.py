@@ -11,7 +11,6 @@ from standings_sim import Team
 from conferences import TEAM_CONFERENCE
 from draft_picks_data import TEAM_FUTURE_PICKS
 from pick_resolver import classify_team_picks, build_pick_assets
-from pick_grading import grade_pick_portfolio
 
 # Arbitrary spread of ratings across all 30 real teams, deterministic order,
 # just so the season/lottery machinery has something realistic-shaped to
@@ -59,7 +58,7 @@ for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
 # Sanity check: a swap's resolved distribution should never contain a pick
 # number below 1 or above 60, and probabilities should sum to ~1.
 print("\n=== Sanity check on every resolved swap distribution ===")
-from swap_resolver import parse_swap_fragment, resolve_swap_distribution
+from swap_resolver import resolve_swap_distribution
 from draft_pipeline_321 import joint_pick_number_trials
 from team_codes import TEAM_ABBREV_TO_NAME
 
@@ -82,12 +81,15 @@ for team in team_names:
             print(f"  BAD: {team} {swap.raw_text} -> {dist}")
 print(f"Checked {checked} swap fragments across the league, {bad} failed sanity check")
 
-# Same sanity check for the new same-year cross-pick conditionals: the
-# CONDITIONED distribution (i.e. among only the trials where the condition
-# held) should sum to ~1, land in the target round's range, and
-# convey_probability should be a genuine probability in [0, 1].
+# Same sanity check for the cross-pick conditionals (both same-year and
+# cross-year -- see swap_resolver.ConditionalPick's cond_year field and
+# pick_resolver.build_pick_assets's "CROSS-YEAR CONDITIONALS" docstring
+# section). resolve_conditional_pick's joint_trials arg is year-indexed
+# ({year: {code: {...}}}) so this same signature covers both cases; a
+# same-year condition just reads the same year's table twice.
 print("\n=== Sanity check on every resolved cross-pick conditional ===")
 from swap_resolver import resolve_conditional_pick
+from draft_pipeline_321 import multi_year_joint_pick_number_trials
 
 bad_cond = 0
 checked_cond = 0
@@ -95,12 +97,27 @@ for team in team_names:
     _, _, conditionals, _, _ = classify_team_picks(team)
     for cond in conditionals:
         names = [TEAM_ABBREV_TO_NAME[cond.team_code], TEAM_ABBREV_TO_NAME[cond.cond_team_code]]
-        joint = joint_pick_number_trials(teams, names, trials=300, seed=3)
-        joint_by_code = {
-            cond.team_code: joint[TEAM_ABBREV_TO_NAME[cond.team_code]],
-            cond.cond_team_code: joint[TEAM_ABBREV_TO_NAME[cond.cond_team_code]],
-        }
-        dist, convey_probability = resolve_conditional_pick(cond, joint_by_code)
+        if cond.cond_year == cond.year:
+            joint = joint_pick_number_trials(teams, names, trials=300, seed=3)
+            joint_trials = {
+                cond.year: {
+                    cond.team_code: joint[TEAM_ABBREV_TO_NAME[cond.team_code]],
+                    cond.cond_team_code: joint[TEAM_ABBREV_TO_NAME[cond.cond_team_code]],
+                }
+            }
+        else:
+            start_year, end_year = sorted((cond.year, cond.cond_year))
+            teams_by_year = {y: teams for y in range(start_year, end_year + 1)}
+            multi_year = multi_year_joint_pick_number_trials(
+                teams_by_year, names, start_year=start_year, end_year=end_year, trials=300, seed=3)
+            joint_trials = {
+                y: {
+                    cond.team_code: multi_year[y][TEAM_ABBREV_TO_NAME[cond.team_code]],
+                    cond.cond_team_code: multi_year[y][TEAM_ABBREV_TO_NAME[cond.cond_team_code]],
+                }
+                for y in multi_year
+            }
+        dist, convey_probability = resolve_conditional_pick(cond, joint_trials)
         checked_cond += 1
         round_lo, round_hi = (1, 30) if cond.round_str == "1st" else (31, 60)
         total_prob = sum(dist.values()) if dist else 1.0  # 0-convey trials -> empty dist is fine

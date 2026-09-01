@@ -125,7 +125,8 @@ if __name__ == "__main__":
     print(f"Loaded contracts for {len(CONTRACT_BY_PLAYER)} distinct (normalized) player names "
           f"across {len(TEAM_CAP_SHEETS)} teams")
 
-    dpm_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "darkodpmleaderboard.csv")
+    from data_paths import find_data_file
+    dpm_csv = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
     with open(dpm_csv, encoding="utf-8-sig") as f:
         darko_names = [row["Player"].strip() for row in csv.DictReader(f)]
     matched = sum(1 for n in darko_names if normalize_name(n) in CONTRACT_BY_PLAYER)

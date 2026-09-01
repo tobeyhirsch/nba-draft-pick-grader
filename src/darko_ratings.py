@@ -411,7 +411,6 @@ def future_year_teams(players: Sequence[DarkoPlayer], offset: int, slope: float,
 
 
 if __name__ == "__main__":
-    from conferences import TEAM_CONFERENCE
     from market_ratings import load_market_win_totals, calibrate_ratings
 
     market_xlsx = find_data_file("market_win_totals.xlsx", os.path.dirname(os.path.abspath(__file__)))

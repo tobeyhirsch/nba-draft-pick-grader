@@ -87,7 +87,8 @@ if __name__ == "__main__":
     for name in ["Giannis Antetokounmpo", "LeBron James", "Kawhi Leonard", "Some Fake Player"]:
         print(f"  {name:<24} -> {trusted_team_for(name)}")
 
-    dpm_csv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "darkodpmleaderboard.csv")
+    from data_paths import find_data_file
+    dpm_csv = find_data_file("darkodpmleaderboard.csv", os.path.dirname(os.path.abspath(__file__)))
     with open(dpm_csv, encoding="utf-8-sig") as f:
         darko_rows = [(row["Player"].strip(), row["Team"].strip()) for row in csv.DictReader(f)]
 

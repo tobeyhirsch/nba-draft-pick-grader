@@ -74,7 +74,8 @@ player_availability_model.py.
 """
 
 import csv
-from typing import Dict, Optional, Tuple
+import os
+from typing import Dict, Tuple
 
 import openpyxl
 
@@ -83,7 +84,10 @@ from name_matching import normalize_name
 # One-time conversion input, supplied locally by the user (not a repo
 # asset) -- update this path if the file moves.
 XLSX_PATH = "/Users/tobeyhirsch/Downloads/Advanced Stats.xlsx"
-OUTPUT_CSV = "data/multi_year_advanced_stats.csv"
+# Anchored to the repo root (one level up from this file's src/ folder) so
+# the output always lands in the tracked data/ folder regardless of
+# whether this script is run from the repo root or from inside src/.
+OUTPUT_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "multi_year_advanced_stats.csv")
 
 SEASON_SHEETS = [
     ("DPM - 2023-2024", "PER VORP BPM - 2023-2024", 2024),

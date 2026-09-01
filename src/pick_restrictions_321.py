@@ -48,7 +48,7 @@ a team's ball draw result can be delayed to; pick restrictions never move a
 team any earlier than its unconstrained/floor-adjusted slot, only later.
 """
 
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Sequence
 
 # Real 2025 and 2026 draft results (first-round picks 1-14, the pre-2027
 # lottery range), "Original team" column only -- i.e. whose own record

@@ -39,12 +39,16 @@ footer line are both filtered out (no numeric G/MP fields to parse).
 """
 
 import csv
-from typing import Dict, Optional, Tuple
+import os
+from typing import Dict, Tuple
 
 import openpyxl
 
 XLSX_PATH = "/Users/tobeyhirsch/Downloads/NBA Player Data 2026.xlsx"
-OUTPUT_CSV = "data/real_mpg_2025_26.csv"
+# Anchored to the repo root (one level up from this file's src/ folder) so
+# the output always lands in the tracked data/ folder regardless of
+# whether this script is run from the repo root or from inside src/.
+OUTPUT_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "real_mpg_2025_26.csv")
 
 
 def load_raw_rows(xlsx_path: str) -> list:

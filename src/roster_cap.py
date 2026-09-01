@@ -38,7 +38,7 @@ table (published each year, e.g. via Basketball Reference or Spotrac).
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 # --- 2026-27 season thresholds (see module docstring for source/caveats) ---
 SALARY_CAP_2026_27 = 164_961_000

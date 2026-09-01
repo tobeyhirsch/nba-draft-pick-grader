@@ -319,5 +319,11 @@ def multi_year_joint_pick_number_trials(teams_by_year: Dict[int, Sequence[Team]]
             for n in names_of_interest:
                 results[y][n]["1st"].append(first_round[n])
                 results[y][n]["2nd"].append(second_round[n])
-            history = advance_history(history, first_round)
+            # Only chain restriction state if there IS state to chain --
+            # base_history=None means "no restrictions enforced," and that
+            # should persist across every year in the chain, not crash on
+            # advance_history's history.items() the moment a year advances
+            # (advance_history requires a real dict, see its docstring).
+            if history is not None:
+                history = advance_history(history, first_round)
     return results

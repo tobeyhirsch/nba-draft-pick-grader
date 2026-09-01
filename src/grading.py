@@ -24,7 +24,7 @@ SELECTION_GRADE_PERCENTILES for grade_selection().
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Dict, Sequence
 
 from pick_valuation import expected_value_of_distribution, pick_value
 

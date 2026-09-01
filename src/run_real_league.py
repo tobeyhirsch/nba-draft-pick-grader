@@ -71,8 +71,12 @@ TRIALS_PER_TEAM = 2000  # lower = faster/noisier, higher = slower/tighter
 STANDINGS_TRIALS = 2000  # trials per year for the projected-standings report (build_projected_standings)
 RESTRICTION_TRIALS = 1000  # trials per year for chaining pick restrictions forward (build_restriction_history_by_year)
 RESTRICTION_SEED = 17
-RESULTS_FILE = "league_pick_grades.md"
-STANDINGS_FILE = "projected_standings.md"
+# Anchored to the repo root (one level up from this file's src/ folder) so
+# the report always lands in the same tracked location regardless of
+# whether this script is run from the repo root or from inside src/.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULTS_FILE = os.path.join(_REPO_ROOT, "league_pick_grades.md")
+STANDINGS_FILE = os.path.join(_REPO_ROOT, "projected_standings.md")
 FINAL_DRAFT_YEAR = FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET  # 2033 -- outside darko_ratings.py's window, falls back to base
 
 # Real multi-year advanced-stats CSV (schema documented in

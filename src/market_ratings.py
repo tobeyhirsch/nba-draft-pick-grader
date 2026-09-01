@@ -46,7 +46,7 @@ precision-sensitive.
 
 import math
 import random
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
 from standings_sim import Team, simulate_season
 
