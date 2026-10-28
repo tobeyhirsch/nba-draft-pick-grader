@@ -45,7 +45,9 @@ import sys
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from market_ratings import load_market_win_totals, build_calibrated_teams
+import dataclasses
+
+from market_ratings import load_deadline_standings, build_calibrated_teams
 from conferences import TEAM_CONFERENCE
 from draft_picks_data import TEAM_FUTURE_PICKS
 from pick_resolver import build_pick_assets
@@ -64,7 +66,10 @@ from player_availability_model import load_availability_context
 # Checks several common data/ locations relative to THIS file (see
 # data_paths.py) rather than assuming one fixed layout -- works whether
 # data/ sits next to this file or as a sibling of a src/ folder it's in.
-MARKET_XLSX = find_data_file("market_win_totals.xlsx", os.path.dirname(os.path.abspath(__file__)))
+# Trade-deadline standings (55 games played + projected full-season wins)
+# replace the preseason market O/U lines (market_win_totals.xlsx) as the
+# 2026-27 source -- see market_ratings.load_deadline_standings.
+DEADLINE_STANDINGS_CSV = find_data_file("trade_deadline_standings.csv", os.path.dirname(os.path.abspath(__file__)))
 CALIBRATION_SEED = 11
 GRADING_SEED = 5
 TRIALS_PER_TEAM = 2000  # lower = faster/noisier, higher = slower/tighter
@@ -91,8 +96,8 @@ MULTI_YEAR_STATS_CSV = find_data_file("multi_year_advanced_stats.csv", os.path.d
 
 
 def build_real_league() -> List[Team]:
-    win_totals = load_market_win_totals(MARKET_XLSX)
-    return build_calibrated_teams(win_totals, TEAM_CONFERENCE, seed=CALIBRATION_SEED,
+    win_totals, records = load_deadline_standings(DEADLINE_STANDINGS_CSV)
+    return build_calibrated_teams(win_totals, TEAM_CONFERENCE, records=records, seed=CALIBRATION_SEED,
                                    trials_per_iteration=400, iterations=30)
 
 
@@ -137,11 +142,15 @@ def build_future_year_teams(base_teams: Sequence[Team]) -> Dict[int, List[Team]]
     availability_ctx = load_availability_context(MULTI_YEAR_STATS_CSV) if MULTI_YEAR_STATS_CSV else None
 
     conferences = {t.name: t.conference for t in base_teams}
-    return {
+    by_year = {
         FIRST_DRAFT_YEAR_COVERED + offset - 1: future_year_teams(
             players, offset, slope, intercept, conferences, projection_ctx, availability_ctx)
         for offset in range(1, MAX_OFFSET + 1)
     }
+    # FINAL_DRAFT_YEAR reuses base_teams' ratings, but NOT their locked-in
+    # 2026-27 deadline record -- that season starts from 0-0.
+    by_year[FINAL_DRAFT_YEAR] = [dataclasses.replace(t, wins_to_date=0, games_played=0) for t in base_teams]
+    return by_year
 
 
 def build_projected_standings(base_teams: Sequence[Team], teams_by_year: Dict[int, List[Team]],
@@ -238,10 +247,11 @@ def write_standings_report(standings_by_year: Dict[int, Dict[str, float]], confe
                             path: str) -> None:
     lines = ["# Projected Standings -- Underlying the Pick Value Projections", ""]
     lines.append(f"Average simulated wins per team per season ({STANDINGS_TRIALS} trials each), for the "
-                 f"SAME ratings that drive every pick distribution/grade in {RESULTS_FILE}: real 2026-27 "
-                 f"market ratings for {FIRST_DRAFT_YEAR_COVERED - 1}, DARKO+longevity-evolved ratings "
+                 f"SAME ratings that drive every pick distribution/grade in {RESULTS_FILE}: 2026-27 "
+                 f"trade-deadline ratings for {FIRST_DRAFT_YEAR_COVERED - 1} (55-game records locked in, "
+                 f"remaining 27 games simulated), DARKO+longevity-evolved ratings "
                  f"(darko_ratings.py) for {FIRST_DRAFT_YEAR_COVERED}-{FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET - 1}, "
-                 f"and the flat {FIRST_DRAFT_YEAR_COVERED - 1} market ratings again for "
+                 f"and the flat {FIRST_DRAFT_YEAR_COVERED - 1} deadline ratings again (from 0-0) for "
                  f"{FINAL_DRAFT_YEAR} (outside darko_ratings.py's window -- see its module docstring for why "
                  f"the window stops where it does). These are regular-season win projections only -- no "
                  f"play-in/lottery/draft-order logic runs here, that all happens downstream in "
@@ -326,11 +336,12 @@ def _avg_grade(picks: List[dict]) -> Optional[float]:
 
 def write_report(all_results: Dict[str, Tuple[List[dict], List[tuple]]], path: str) -> None:
     lines = ["# NBA Draft Pick Grades -- Full League Run", ""]
-    lines.append(f"2027-draft ratings calibrated from consensus market win totals (DraftKings/"
-                 f"FanDuel/Hard Rock/Caesars 2026-27 O/U lines); the {FIRST_DRAFT_YEAR_COVERED}-"
+    lines.append(f"2027-draft ratings calibrated from the 2026-27 trade-deadline standings "
+                 f"(55-game records locked in, remaining 27 games simulated toward each team's "
+                 f"projected full-season wins); the {FIRST_DRAFT_YEAR_COVERED}-"
                  f"{FIRST_DRAFT_YEAR_COVERED + MAX_OFFSET - 1} drafts use DARKO DPM + career "
-                 f"longevity data instead, calibrated against those same market ratings "
-                 f"(darko_ratings.py); 2033 falls back to the flat 2026-27 market ratings. "
+                 f"longevity data instead, calibrated against those same deadline ratings "
+                 f"(darko_ratings.py); 2033 falls back to the flat 2026-27 deadline ratings (from 0-0). "
                  f"Picks graded 1-10 via the swap-resolved pipeline. {TRIALS_PER_TEAM} simulation "
                  f"trials per team per draft year. Grades and averages below are split by round --"
                  f" 2nd-round picks carry the pick_valuation.py 0.4x haircut baked into their value, "
@@ -397,7 +408,7 @@ def write_report(all_results: Dict[str, Tuple[List[dict], List[tuple]]], path: s
 def main():
     requested = sys.argv[1:] if len(sys.argv) > 1 else sorted(TEAM_FUTURE_PICKS.keys())
 
-    print("Calibrating market ratings for all 30 teams...")
+    print("Calibrating trade-deadline ratings for all 30 teams...")
     t0 = time.time()
     teams = build_real_league()
     print(f"  done in {time.time() - t0:.1f}s")

@@ -89,6 +89,7 @@ SCOPE LIMITATIONS (read before trusting the output):
 """
 
 import random
+from dataclasses import replace
 from typing import Dict, List, Sequence, Tuple
 
 from standings_sim import Team
@@ -124,7 +125,9 @@ def _build_base_by_year(base_teams: Sequence[Team], multi_year_stats_csv) -> Tup
     projection_ctx = load_projection_context(multi_year_stats_csv) if multi_year_stats_csv else None
     availability_ctx = load_availability_context(multi_year_stats_csv) if multi_year_stats_csv else None
 
-    by_year: Dict[int, List[Team]] = {2027: list(base_teams), FINAL_DRAFT_YEAR: list(base_teams)}
+    # 2033 reuses base ratings but starts 0-0 -- only 2027 keeps the locked deadline record.
+    by_year: Dict[int, List[Team]] = {2027: list(base_teams),
+                                      FINAL_DRAFT_YEAR: [replace(t, wins_to_date=0, games_played=0) for t in base_teams]}
     for offset in range(1, MAX_OFFSET + 1):
         year = FIRST_DRAFT_YEAR_COVERED + offset - 1
         by_year[year] = future_year_teams(players, offset, slope, intercept, conferences,
@@ -188,7 +191,7 @@ def run_worlds(base_teams: Sequence[Team], num_worlds: int = 300, seed: int = 71
                     dpm_delta += team_dpm_delta(pick_number, tier, years_since)
                 elo_delta = slope * dpm_delta
                 deltas[t.name] = elo_delta
-                this_year_teams.append(Team(name=t.name, rating=t.rating + elo_delta, conference=t.conference))
+                this_year_teams.append(replace(t, rating=t.rating + elo_delta))
 
             wins, first_round = _simulate_321_draft_core(this_year_teams, rng=rng,
                                                            games_per_team=games_per_team, history=history)
@@ -252,13 +255,14 @@ def summarize(results: Dict[int, Dict[str, List[Dict]]]) -> Dict[int, Dict[str, 
 
 if __name__ == "__main__":
     import time
-    from market_ratings import load_market_win_totals, build_calibrated_teams
+    from market_ratings import load_deadline_standings, build_calibrated_teams
     from data_paths import find_data_file
     import os
 
-    market_xlsx = find_data_file("market_win_totals.xlsx", os.path.dirname(os.path.abspath(__file__)))
-    win_totals = load_market_win_totals(market_xlsx)
-    base_teams = build_calibrated_teams(win_totals, TEAM_CONFERENCE, seed=11, trials_per_iteration=400, iterations=30)
+    standings_csv = find_data_file("trade_deadline_standings.csv", os.path.dirname(os.path.abspath(__file__)))
+    win_totals, records = load_deadline_standings(standings_csv)
+    base_teams = build_calibrated_teams(win_totals, TEAM_CONFERENCE, records=records, seed=11,
+                                        trials_per_iteration=400, iterations=30)
 
     NUM_WORLDS = int(os.environ.get("SEQ_SIM_WORLDS", "50"))
     print(f"Running {NUM_WORLDS} sequential 2027-2033 worlds (real pick ownership routing)...")

@@ -46,7 +46,7 @@ precision-sensitive.
 
 import math
 import random
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from standings_sim import Team, simulate_season
 
@@ -77,6 +77,32 @@ def load_market_win_totals(xlsx_path: str) -> Dict[str, float]:
     return totals
 
 
+def load_deadline_standings(csv_path: str) -> Tuple[Dict[str, float], Dict[str, Tuple[int, int]]]:
+    """
+    Loads the trade-deadline standings (data/trade_deadline_standings.csv:
+    Team, W, L, Proj_W). These replace the preseason market O/U lines as
+    the 2026-27 source for real runs. Returns (win_totals, records):
+    win_totals = {team: projected full-season wins} -- the calibration
+    target, same shape as load_market_win_totals(); records = {team: (W, L)}
+    already played, locked in so only the rest of the season is simulated
+    (see calibrate_ratings' `records`).
+
+    Source table's rounding leaves totals slightly unbalanced (828 W vs.
+    822 L, 1235 projected wins vs. 1230 possible), so calibration can't hit
+    every target exactly -- the leftover is ~1 win spread across 30 teams.
+    """
+    import csv
+
+    win_totals: Dict[str, float] = {}
+    records: Dict[str, Tuple[int, int]] = {}
+    with open(csv_path, newline="") as f:
+        for row in csv.DictReader(f):
+            team = row["Team"].strip()
+            win_totals[team] = float(row["Proj_W"])
+            records[team] = (int(row["W"]), int(row["L"]))
+    return win_totals, records
+
+
 def initial_rating_guess(win_total: float, games: int = GAMES_PER_SEASON) -> float:
     """
     Closed-form starting point ONLY (not the final calibrated rating) --
@@ -92,6 +118,7 @@ def initial_rating_guess(win_total: float, games: int = GAMES_PER_SEASON) -> flo
 
 
 def calibrate_ratings(win_totals: Dict[str, float],
+                       records: Optional[Dict[str, Tuple[int, int]]] = None,
                        iterations: int = 30,
                        trials_per_iteration: int = 400,
                        learning_rate: float = 6.0,
@@ -108,13 +135,28 @@ def calibrate_ratings(win_totals: Dict[str, float],
     (see market_ratings.py's __main__ block); if convergence stalls or
     oscillates for a different win-total distribution, lower learning_rate
     and raise iterations.
+
+    `records`: optional {team: (wins, losses)} already played (see
+    load_deadline_standings). Those games are locked in and only the
+    remainder is simulated, so the rating is fit to the remaining-games
+    pace (projected wins minus wins to date) rather than the full season --
+    i.e. it reflects the team as currently constructed, post-deadline.
     """
     names = list(win_totals.keys())
-    ratings = {n: initial_rating_guess(win_totals[n]) for n in names}
+    records = records or {}
+    locked = {n: records.get(n, (0, 0)) for n in names}
+
+    def _guess(n: str) -> float:
+        w, l = locked[n]
+        remaining = GAMES_PER_SEASON - w - l
+        return initial_rating_guess((win_totals[n] - w) * GAMES_PER_SEASON / remaining)
+
+    ratings = {n: _guess(n) for n in names}
     rng = random.Random(seed)
 
     for it in range(iterations):
-        teams = [Team(name=n, rating=ratings[n]) for n in names]
+        teams = [Team(name=n, rating=ratings[n], wins_to_date=locked[n][0], games_played=sum(locked[n]))
+                 for n in names]
         totals = {n: 0.0 for n in names}
         for _ in range(trials_per_iteration):
             wins = simulate_season(teams, rng=rng, games_per_team=GAMES_PER_SEASON)
@@ -142,13 +184,20 @@ def calibrate_ratings(win_totals: Dict[str, float],
 
 
 def build_calibrated_teams(win_totals: Dict[str, float], conferences: Dict[str, str],
+                            records: Optional[Dict[str, Tuple[int, int]]] = None,
                             **calibrate_kwargs) -> List[Team]:
-    """Convenience wrapper: calibrate ratings and return ready-to-use Team objects with conferences attached."""
-    ratings = calibrate_ratings(win_totals, **calibrate_kwargs)
+    """
+    Convenience wrapper: calibrate ratings and return ready-to-use Team
+    objects with conferences (and any locked-in `records`) attached.
+    """
+    records = records or {}
+    ratings = calibrate_ratings(win_totals, records=records, **calibrate_kwargs)
     missing_conf = set(win_totals) - set(conferences)
     if missing_conf:
         raise KeyError(f"No conference assignment for: {sorted(missing_conf)}")
-    return [Team(name=n, rating=ratings[n], conference=conferences[n]) for n in win_totals]
+    return [Team(name=n, rating=ratings[n], conference=conferences[n],
+                 wins_to_date=records.get(n, (0, 0))[0], games_played=sum(records.get(n, (0, 0))))
+            for n in win_totals]
 
 
 if __name__ == "__main__":

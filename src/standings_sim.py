@@ -36,6 +36,12 @@ class Team:
     name: str
     rating: float  # Elo-like scale, ~1500 = league average
     conference: str = None  # "East" / "West" -- only required for the 3-2-1 (2027+) lottery
+    # Record already locked in before the simulated stretch starts (e.g. the
+    # trade-deadline standings, see market_ratings.load_deadline_standings).
+    # simulate_season only plays the remaining games_per_team - games_played
+    # games and adds wins_to_date on top. Defaults = a full season from 0-0.
+    wins_to_date: int = 0
+    games_played: int = 0
 
 
 HOME_COURT_ELO = 60.0  # roughly +3 points of home-court advantage
@@ -87,12 +93,20 @@ def build_synthetic_schedule(team_names: Sequence[str], games_per_team: int = 82
 
 def simulate_season(teams: Sequence[Team], rng: random.Random = random,
                      games_per_team: int = 82) -> Dict[str, int]:
-    """Runs one simulated season, returns {team_name: wins}."""
+    """
+    Runs one simulated season, returns {team_name: wins}. Teams carrying a
+    locked-in record (Team.games_played > 0) only play out the remainder;
+    every team must have played the same number of games so the synthetic
+    schedule for the remainder stays balanced.
+    """
     ratings = {t.name: t.rating for t in teams}
     names = [t.name for t in teams]
-    schedule = build_synthetic_schedule(names, games_per_team=games_per_team, rng=rng)
+    played = {t.games_played for t in teams}
+    if len(played) != 1:
+        raise ValueError(f"All teams must share the same games_played, got {sorted(played)}")
+    schedule = build_synthetic_schedule(names, games_per_team=games_per_team - played.pop(), rng=rng)
 
-    wins = {name: 0 for name in names}
+    wins = {t.name: t.wins_to_date for t in teams}
     for home, away in schedule:
         p_home = win_probability(ratings[home], ratings[away])
         if rng.random() < p_home:

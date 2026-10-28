@@ -411,14 +411,14 @@ def future_year_teams(players: Sequence[DarkoPlayer], offset: int, slope: float,
 
 
 if __name__ == "__main__":
-    from market_ratings import load_market_win_totals, calibrate_ratings
+    from market_ratings import load_deadline_standings, calibrate_ratings
 
-    market_xlsx = find_data_file("market_win_totals.xlsx", os.path.dirname(os.path.abspath(__file__)))
-    win_totals = load_market_win_totals(market_xlsx)
-    print(f"Loaded {len(win_totals)} teams' market win totals from {market_xlsx}")
+    standings_csv = find_data_file("trade_deadline_standings.csv", os.path.dirname(os.path.abspath(__file__)))
+    win_totals, records = load_deadline_standings(standings_csv)
+    print(f"Loaded {len(win_totals)} teams' trade-deadline standings from {standings_csv}")
 
     print("Calibrating market ratings (ground truth for the CURRENT season)...")
-    market_elo = calibrate_ratings(win_totals, seed=11, trials_per_iteration=400, iterations=30)
+    market_elo = calibrate_ratings(win_totals, records=records, seed=11, trials_per_iteration=400, iterations=30)
 
     players = load_darko_players()
     print(f"Loaded {len(players)} players from the DARKO leaderboard "
